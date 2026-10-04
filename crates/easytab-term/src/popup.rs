@@ -72,6 +72,31 @@ impl Key {
     }
 }
 
+/// Réponse du terminal à `ESC[6n` (`ESC[ligne;colonneR`, à partir de 1) :
+/// position et emplacement de la séquence dans `data`.
+pub fn cursor_report(data: &[u8]) -> Option<(u16, u16, std::ops::Range<usize>)> {
+    let mut start = 0;
+    while let Some(offset) = data[start..].windows(2).position(|w| w == b"\x1b[") {
+        let begin = start + offset;
+        let body = &data[begin + 2..];
+        if let Some(end) = body
+            .iter()
+            .position(|&b| !(b.is_ascii_digit() || b == b';'))
+        {
+            if body[end] == b'R' {
+                let text = std::str::from_utf8(&body[..end]).ok()?;
+                if let Some((row, col)) = text.split_once(';') {
+                    if let (Ok(row), Ok(col)) = (row.parse(), col.parse()) {
+                        return Some((row, col, begin..begin + 2 + end + 1));
+                    }
+                }
+            }
+        }
+        start = begin + 2;
+    }
+    None
+}
+
 const VK_TAB: u32 = 9;
 const VK_RETURN: u32 = 13;
 const VK_ESCAPE: u32 = 27;
@@ -431,6 +456,14 @@ mod tests {
         assert_eq!(Key::parse(b"\x1b"), Some(Key::Dismiss));
         assert_eq!(Key::parse(b"\r"), Some(Key::Enter));
         assert_eq!(Key::parse(b"a"), None);
+    }
+
+    #[test]
+    fn finds_cursor_reports() {
+        assert_eq!(cursor_report(b"\x1b[12;5R"), Some((12, 5, 0..7)));
+        assert_eq!(cursor_report(b"ab\x1b[A\x1b[3;40Rc"), Some((3, 40, 5..12)));
+        assert_eq!(cursor_report(b"\x1b[1;5A"), None);
+        assert_eq!(cursor_report(b"hello"), None);
     }
 
     #[test]

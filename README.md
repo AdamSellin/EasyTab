@@ -31,7 +31,7 @@ liste dès que le résultat arrive. La frappe n'attend jamais.
 | `crates/easytab-core` | Suit l'état du shell (marqueurs de prompt `OSC 133`, dossier courant `OSC 7`, copie de l'écran) et transforme la ligne en cours en suggestions à partir des specs. |
 | `crates/easytab-term` | Wrapper PTY : lance le shell dans un pseudo-terminal, relaie clavier et écran, dessine la liste de suggestions. |
 | `crates/easytab-cli` | Commande `easytab` : `install`, `uninstall`, `doctor`, `init`. |
-| `shell-integration/` | Scripts zsh et bash qui relancent le shell sous `easytab-term` et émettent les marqueurs de prompt. |
+| `shell-integration/` | Scripts zsh, bash et PowerShell qui relancent le shell sous `easytab-term` et émettent les marqueurs de prompt. |
 | `specs/` | Specs de complétion importées de Fig (voir [specs/README.md](specs/README.md)). |
 | `tools/` | Script d'import des specs Fig. |
 
@@ -45,7 +45,7 @@ curl -fsSL https://github.com/AdamSellin/EasyTab/releases/latest/download/instal
 ```
 
 ```powershell
-# Windows (pour Git Bash dans Windows Terminal ou VS Code)
+# Windows (PowerShell et Git Bash, dans Windows Terminal ou VS Code)
 irm https://github.com/AdamSellin/EasyTab/releases/latest/download/install.ps1 | iex
 ```
 
@@ -58,8 +58,9 @@ scripts d'installation.
 
 ## Compiler depuis les sources
 
-Prérequis : [Rust](https://rustup.rs) stable. Shells pris en charge pour l'instant : zsh et bash
-(Linux, macOS), et Git Bash sous Windows dans Windows Terminal ou le terminal de VS Code. La fenêtre
+Prérequis : [Rust](https://rustup.rs) stable. Shells pris en charge : zsh, bash et PowerShell
+(`easytab install --shell pwsh`, PowerShell 7 et Windows PowerShell 5), et Git Bash sous Windows,
+dans Windows Terminal ou le terminal de VS Code. La fenêtre
 « Git Bash » par défaut (mintty) n'est pas encore prise en charge : le shell s'y lance sans EasyTab, avec un message.
 Sous Windows, utilise le toolchain Rust MSVC (`rustup default stable-msvc`).
 

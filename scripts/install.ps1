@@ -18,7 +18,9 @@ try {
     Invoke-WebRequest $url -OutFile "$tmp\easytab.zip" -UseBasicParsing
     Expand-Archive "$tmp\easytab.zip" -DestinationPath $tmp
     $easytab = "$tmp\easytab-$target\easytab.exe"
-    # Copie les programmes dans ~\.easytab\bin et configure Git Bash.
+    # Copie les programmes dans ~\.easytab\bin, puis configure PowerShell et
+    # Git Bash.
+    & $easytab install --shell pwsh
     & $easytab install --shell bash
 } finally {
     Remove-Item -Recurse -Force $tmp
