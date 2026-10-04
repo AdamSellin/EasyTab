@@ -6,6 +6,10 @@
 # $env:GITHUB_TOKEN, ou de gh).
 # Variables : $env:EASYTAB_VERSION (ex. v0.2.0, défaut : la dernière).
 $ErrorActionPreference = 'Stop'
+# Le fichier reste en ASCII : Windows PowerShell 5.1 lit les scripts sans BOM
+# comme de l'ANSI, et `irm | iex` ne supporte pas de BOM. Les lettres
+# accentuées des messages sont donc écrites par leur code.
+$e = [char]0xE9; $a = [char]0xE0
 # Windows PowerShell 5.1 n'active pas TLS 1.2 par défaut.
 [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 
@@ -53,19 +57,19 @@ $tmp = Join-Path ([IO.Path]::GetTempPath()) ("easytab-" + [Guid]::NewGuid())
 New-Item -ItemType Directory $tmp | Out-Null
 try {
     $zip = "$tmp\easytab.zip"
-    Write-Host "Téléchargement de $url"
+    Write-Host "T${e}l${e}chargement de $url"
     try {
         Invoke-WebRequest $url -OutFile $zip -UseBasicParsing
     } catch {
-        Write-Host 'Lien direct indisponible (dépôt privé ?), téléchargement avec tes identifiants GitHub'
+        Write-Host "Lien direct indisponible (d${e}p$([char]0xF4)t priv${e} ?), t${e}l${e}chargement avec tes identifiants GitHub"
         if (-not (Get-PrivateAsset $zip)) {
             if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
-                throw "Téléchargement impossible. Dépôt privé : connecte git à GitHub, ou définis `$env:GITHUB_TOKEN."
+                throw "T${e}l${e}chargement impossible. D${e}p$([char]0xF4)t priv${e} : connecte git $a GitHub, ou d${e}finis `$env:GITHUB_TOKEN."
             }
             $tag = @()
             if ($env:EASYTAB_VERSION) { $tag = @($env:EASYTAB_VERSION) }
             & gh release download @tag -R $repo -p $asset -O $zip
-            if ($LASTEXITCODE -ne 0) { throw "gh release download a échoué ($LASTEXITCODE)." }
+            if ($LASTEXITCODE -ne 0) { throw "gh release download a ${e}chou${e} ($LASTEXITCODE)." }
         }
     }
     Expand-Archive $zip -DestinationPath $tmp
