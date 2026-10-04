@@ -1,7 +1,7 @@
 //! `easytab-term` : lance le shell dans un pseudo-terminal et relaie tout entre
 //! le vrai terminal et ce shell, en gardant une copie de l'écran pour savoir ce
 //! que l'utilisateur tape. Il affiche la liste de suggestions par-dessus et
-//! intercepte ↑, ↓, Tab et Échap quand elle est visible.
+//! intercepte ↑, ↓, Tab, Entrée (après ↑/↓) et Échap quand elle est visible.
 
 mod popup;
 
@@ -128,7 +128,7 @@ fn run(args: Args) -> Result<i32> {
             {
                 let mut shared = input_shared.lock().unwrap();
                 let Shared { session, popup, .. } = &mut *shared;
-                match Key::parse(data).filter(|_| popup.is_shown()) {
+                match Key::parse(data).filter(|&key| popup.handles(key)) {
                     Some(key) => {
                         popup.erase(session.screen(), &mut frame);
                         to_shell.clear();
@@ -136,7 +136,9 @@ fn run(args: Args) -> Result<i32> {
                             Key::Up => popup.select(-1),
                             Key::Down => popup.select(1),
                             Key::Dismiss => popup.dismiss(),
-                            Key::Accept => to_shell = popup.accept().unwrap_or_default(),
+                            Key::Accept | Key::Enter => {
+                                to_shell = popup.accept().unwrap_or_default()
+                            }
                         }
                         popup.draw(session.screen(), &mut frame);
                     }

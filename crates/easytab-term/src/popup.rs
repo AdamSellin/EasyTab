@@ -25,6 +25,9 @@ pub enum Key {
     Up,
     Down,
     Accept,
+    /// Entrée : insère la suggestion seulement si l'utilisateur en a choisi une
+    /// avec ↑/↓ ; sinon la commande part normalement.
+    Enter,
     Dismiss,
 }
 
@@ -35,6 +38,7 @@ impl Key {
             b"\x1b[A" | b"\x1bOA" => Some(Key::Up),
             b"\x1b[B" | b"\x1bOB" => Some(Key::Down),
             b"\t" => Some(Key::Accept),
+            b"\r" => Some(Key::Enter),
             b"\x1b" => Some(Key::Dismiss),
             _ => None,
         }
@@ -60,6 +64,8 @@ pub struct Popup {
     /// De nouvelles suggestions dynamiques sont arrivées : recalculer même si la
     /// ligne n'a pas changé.
     stale: bool,
+    /// L'utilisateur a déplacé la sélection avec ↑/↓ depuis la dernière frappe.
+    navigated: bool,
 }
 
 impl Popup {
@@ -82,6 +88,9 @@ impl Popup {
             .filter(|_| input == self.last_input)
             .and_then(|c| c.suggestions.into_iter().nth(self.selected))
             .map(|s| s.label);
+        if input != self.last_input {
+            self.navigated = false;
+        }
         self.last_input = input.clone();
         self.selected = 0;
         self.scroll = 0;
@@ -131,7 +140,13 @@ impl Popup {
         if let Some(completion) = &self.completion {
             let len = completion.suggestions.len() as isize;
             self.selected = (self.selected as isize + delta).rem_euclid(len) as usize;
+            self.navigated = true;
         }
+    }
+
+    /// Vrai si la touche revient à la liste plutôt qu'au shell.
+    pub fn handles(&self, key: Key) -> bool {
+        self.is_shown() && (key != Key::Enter || self.navigated)
     }
 
     pub fn dismiss(&mut self) {
@@ -343,7 +358,20 @@ mod tests {
         assert_eq!(Key::parse(b"\x1bOB"), Some(Key::Down));
         assert_eq!(Key::parse(b"\t"), Some(Key::Accept));
         assert_eq!(Key::parse(b"\x1b"), Some(Key::Dismiss));
+        assert_eq!(Key::parse(b"\r"), Some(Key::Enter));
         assert_eq!(Key::parse(b"a"), None);
+    }
+
+    #[test]
+    fn enter_inserts_only_after_choosing_with_the_arrows() {
+        let session = session_with(b"git ch");
+        let mut popup = popup_for(&session);
+        let mut out = Vec::new();
+        popup.draw(session.screen(), &mut out);
+        assert!(popup.handles(Key::Down));
+        assert!(!popup.handles(Key::Enter));
+        popup.select(1);
+        assert!(popup.handles(Key::Enter));
     }
 
     #[test]
