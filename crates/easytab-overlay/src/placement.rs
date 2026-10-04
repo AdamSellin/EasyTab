@@ -54,8 +54,10 @@ const BEHIND_LIMIT: u32 = 3;
 /// lecture peut donc montrer le curseur plus à gauche qu'il n'est. On garde
 /// une position de référence, avec la ligne et la colonne du curseur dans le
 /// terminal à ce moment-là, et on en déduit la position actuelle. Une lecture
-/// plus à droite ou sur une autre ligne est retenue tout de suite ; une
-/// lecture plus à gauche sur la même ligne seulement si elle se répète.
+/// à moins d'une demi-case de la position déduite ne la change pas (sinon la
+/// fenêtre tremble pendant la frappe). Une lecture plus à droite ou sur une
+/// autre ligne est retenue tout de suite ; une lecture plus à gauche sur la
+/// même ligne, souvent en retard d'une lettre, seulement si elle se répète.
 #[derive(Debug, Default)]
 pub struct Tracker {
     anchor: Option<(Caret, usize, usize)>,
@@ -79,7 +81,8 @@ impl Tracker {
         let dx = caret.rect.left - expected.rect.left;
         let same_row = (caret.rect.top - expected.rect.top).abs() <= caret.height() / 2;
         let close = same_row && (dx.abs() as f64) <= expected.cell_width * 1.5;
-        if same_row && !close && dx < 0 {
+        let still = same_row && (dx.abs() as f64) <= expected.cell_width * 0.5;
+        if same_row && !still && dx < 0 {
             self.behind += 1;
             if self.behind < BEHIND_LIMIT {
                 return false;
@@ -98,6 +101,9 @@ impl Tracker {
             {
                 self.cell_width = Some(width);
             }
+        }
+        if still {
+            return false;
         }
         self.anchor = Some((caret, row, col));
         expected.rect != caret.rect
@@ -233,6 +239,18 @@ mod tests {
             tracker.read(read(10, 40), 2, 13);
         }
         assert_eq!(tracker.caret(2, 13).unwrap().rect.left, 10);
+    }
+
+    #[test]
+    fn stays_still_while_typing() {
+        let mut tracker = Tracker::default();
+        tracker.read(read(100, 40), 2, 10);
+        // Lecture en retard d'une lettre : ignorée.
+        assert!(!tracker.read(read(100, 40), 2, 11));
+        assert_eq!(tracker.caret(2, 11).unwrap().rect.left, 109);
+        // Écart de quelques pixels (arrondis) : ignoré aussi.
+        assert!(!tracker.read(read(111, 40), 2, 11));
+        assert_eq!(tracker.caret(2, 11).unwrap().rect.left, 109);
     }
 
     #[test]
