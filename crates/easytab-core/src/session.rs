@@ -1,3 +1,5 @@
+use std::path::{Path, PathBuf};
+
 use crate::osc::{Marker, OscScanner};
 
 /// Où en est le shell.
@@ -19,6 +21,7 @@ pub struct Session {
     scanner: OscScanner,
     phase: Phase,
     last_exit_code: Option<i32>,
+    cwd: Option<PathBuf>,
 }
 
 impl Session {
@@ -31,6 +34,7 @@ impl Session {
             scanner: OscScanner::new(),
             phase: Phase::Unknown,
             last_exit_code: None,
+            cwd: None,
         }
     }
 
@@ -40,6 +44,21 @@ impl Session {
 
     pub fn last_exit_code(&self) -> Option<i32> {
         self.last_exit_code
+    }
+
+    /// Dossier courant annoncé par le shell (`OSC 7`).
+    pub fn cwd(&self) -> Option<&Path> {
+        self.cwd.as_deref()
+    }
+
+    /// Vrai si le flux est entre deux séquences : on peut alors écrire
+    /// par-dessus sans couper une séquence du shell.
+    pub fn at_boundary(&self) -> bool {
+        self.scanner.is_idle()
+    }
+
+    pub fn screen(&self) -> &vt100::Screen {
+        self.parser.screen()
     }
 
     pub fn resize(&mut self, rows: u16, cols: u16) {
@@ -89,6 +108,10 @@ impl Session {
 
     fn apply(&mut self, marker: Marker) {
         self.phase = match marker {
+            Marker::WorkingDirectory(path) => {
+                self.cwd = Some(path);
+                return;
+            }
             Marker::PromptStart => Phase::Prompt,
             Marker::InputStart => {
                 let (row, col) = self.parser.screen().cursor_position();
@@ -127,6 +150,14 @@ mod tests {
 
         session.feed_output(b"git ch");
         assert_eq!(session.current_input().as_deref(), Some("git ch"));
+    }
+
+    #[test]
+    fn keeps_trailing_spaces() {
+        let mut session = Session::new(24, 80);
+        session.feed_output(PROMPT);
+        session.feed_output(b"git ");
+        assert_eq!(session.current_input().as_deref(), Some("git "));
     }
 
     #[test]
@@ -178,6 +209,13 @@ mod tests {
         session.feed_output(PROMPT);
         session.feed_output(b"git ch");
         assert_eq!(session.current_input().as_deref(), Some("git ch"));
+    }
+
+    #[test]
+    fn tracks_working_directory() {
+        let mut session = Session::new(24, 80);
+        session.feed_output(b"\x1b]7;file://pc/tmp/projet\x07");
+        assert_eq!(session.cwd(), Some(Path::new("/tmp/projet")));
     }
 
     #[test]
