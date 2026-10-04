@@ -35,6 +35,8 @@ pub struct Suggestion {
     pub description: Option<String>,
     /// Arguments attendus, affichés en gris après le nom (`<mode>`, `[pathspec...]`).
     pub hint: Option<String>,
+    /// Icône proposée par la spec (`git`, `npm`…).
+    pub icon: Option<String>,
     pub kind: Kind,
     /// Ajouter un espace après l'insertion.
     pub append_space: bool,
@@ -269,6 +271,7 @@ impl Completer {
                     description: command.description.clone(),
                     kind: Kind::Command,
                     hint: None,
+                    icon: None,
                     append_space: true,
                 })
             })
@@ -300,6 +303,7 @@ impl Completer {
                     description: v.description.clone().or_else(|| arg.description.clone()),
                     kind: Kind::Value,
                     hint: None,
+                    icon: None,
                 })
             })
             .collect();
@@ -330,6 +334,7 @@ impl Completer {
                     insert: format!("{insert_prefix}{}", line::escape(&entry.path)),
                     description: None,
                     hint: None,
+                    icon: None,
                     kind: if entry.is_dir {
                         Kind::Folder
                     } else {
@@ -368,6 +373,7 @@ fn push_subcommands(node: &Command, prefix: &str, out: &mut Vec<Suggestion>) {
                 insert: s.insert.clone().unwrap_or_else(|| name.clone()),
                 description: s.description.clone(),
                 hint: args_hint(&s.args),
+                icon: None,
                 kind: Kind::Subcommand,
                 append_space: true,
             })
@@ -416,6 +422,7 @@ fn push_options(node: &Command, persistent: &[&Opt], prefix: &str, out: &mut Vec
                 insert,
                 description: o.description.clone(),
                 hint: args_hint(&o.args),
+                icon: None,
                 kind: Kind::Option,
                 append_space: !takes_equals,
             })
@@ -461,6 +468,7 @@ fn push_generated(
             insert,
             description: item.description.clone(),
             hint: None,
+            icon: item.icon.clone(),
             kind: Kind::Dynamic,
             rank,
         });

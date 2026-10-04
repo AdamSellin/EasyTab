@@ -5,6 +5,7 @@
 use std::io::Write;
 use std::path::Path;
 
+use easytab_core::overlay::{Row, View};
 use easytab_core::{Completer, Completion, Kind, Session};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
@@ -168,12 +169,14 @@ pub struct Popup {
     stale: bool,
     /// L'utilisateur a déplacé la sélection avec ↑/↓ depuis la dernière frappe.
     navigated: bool,
+    /// La liste est affichée dans la fenêtre flottante.
+    in_overlay: bool,
 }
 
 impl Popup {
     /// La liste est à l'écran : les touches de navigation lui reviennent.
     pub fn is_shown(&self) -> bool {
-        self.drawn.is_some()
+        self.drawn.is_some() || self.in_overlay
     }
 
     /// Recalcule les suggestions si la ligne en cours a changé.
@@ -277,6 +280,44 @@ impl Popup {
         })
     }
 
+    /// Contenu de la fenêtre flottante, ou `None` s'il n'y a rien à afficher.
+    pub fn view(&mut self) -> Option<View> {
+        let Some(completion) = &self.completion else {
+            self.in_overlay = false;
+            return None;
+        };
+        let items = &completion.suggestions;
+        let visible = items.len().min(MAX_ROWS);
+        self.scroll = scrolled(self.selected, self.scroll, visible);
+        let query = typed_part(&completion.replace);
+        let rows = items
+            .iter()
+            .skip(self.scroll)
+            .take(visible)
+            .map(|item| Row {
+                label: item.label.clone(),
+                hint: item.hint.clone(),
+                kind: kind_name(item.kind).to_string(),
+                icon: item.icon.clone(),
+                matched: matched_chars(&item.label, query),
+            })
+            .collect();
+        self.in_overlay = true;
+        Some(View {
+            rows,
+            selected: self.selected - self.scroll,
+            description: items.get(self.selected).and_then(|s| s.description.clone()),
+            word_width: completion.replace.width(),
+            total: items.len(),
+            first: self.scroll,
+        })
+    }
+
+    /// La fenêtre flottante est cachée.
+    pub fn leave_overlay(&mut self) {
+        self.in_overlay = false;
+    }
+
     /// Restaure les lignes recouvertes par la liste.
     pub fn erase(&mut self, screen: &vt100::Screen, out: &mut Vec<u8>) {
         let Some(area) = self.drawn.take() else {
@@ -319,11 +360,7 @@ impl Popup {
             return;
         };
 
-        if self.selected < self.scroll {
-            self.scroll = self.selected;
-        } else if self.selected >= self.scroll + visible {
-            self.scroll = self.selected + 1 - visible;
-        }
+        self.scroll = scrolled(self.selected, self.scroll, visible);
 
         // « │ ▣ label hint │ » : bordure, espace, pastille (3), espace, texte,
         // espace, bordure.
@@ -426,6 +463,29 @@ impl Popup {
 
         restore_cursor(screen, out);
         self.drawn = Some(Area { top, rows: height });
+    }
+}
+
+/// Première ligne visible pour que la suggestion choisie reste à l'écran.
+fn scrolled(selected: usize, scroll: usize, visible: usize) -> usize {
+    if selected < scroll {
+        selected
+    } else if selected >= scroll + visible {
+        selected + 1 - visible
+    } else {
+        scroll
+    }
+}
+
+fn kind_name(kind: Kind) -> &'static str {
+    match kind {
+        Kind::Command => "command",
+        Kind::Subcommand => "subcommand",
+        Kind::Option => "option",
+        Kind::Value => "value",
+        Kind::Folder => "folder",
+        Kind::File => "file",
+        Kind::Dynamic => "dynamic",
     }
 }
 

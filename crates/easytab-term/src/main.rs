@@ -3,6 +3,7 @@
 //! que l'utilisateur tape. Il affiche la liste de suggestions par-dessus et
 //! intercepte ↑, ↓, Tab, Entrée (après ↑/↓) et Échap quand elle est visible.
 
+mod overlay;
 mod popup;
 
 use std::fs::{File, OpenOptions};
@@ -17,6 +18,7 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use crossterm::terminal;
 use easytab_core::{Completer, Generators, Session, Usage};
+use overlay::Overlay;
 use popup::{Key, Popup};
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 
@@ -33,6 +35,8 @@ struct Shared {
     session: Session,
     popup: Popup,
     completer: Completer,
+    /// Fenêtre flottante, si elle est disponible.
+    overlay: Option<Overlay>,
     /// Dossier utilisé tant que le shell n'a pas annoncé le sien (`OSC 7`).
     fallback_cwd: PathBuf,
 }
@@ -45,7 +49,16 @@ impl Shared {
         }
         self.popup
             .update(&self.session, &self.completer, &self.fallback_cwd);
-        self.popup.draw(self.session.screen(), frame);
+        if let Some(overlay) = &mut self.overlay {
+            if self
+                .session
+                .current_input()
+                .is_none_or(|input| input.trim().is_empty())
+            {
+                overlay.retry();
+            }
+        }
+        self.show(frame);
     }
 
     /// Des suggestions dynamiques sont arrivées : redessine la liste.
@@ -53,9 +66,34 @@ impl Shared {
         if !self.session.at_boundary() {
             return;
         }
-        self.popup.erase(self.session.screen(), frame);
+        self.hide(frame);
         self.popup.reload();
         self.refresh(frame);
+    }
+
+    /// Affiche la liste dans la fenêtre flottante si possible, sinon dans le
+    /// terminal.
+    fn show(&mut self, frame: &mut Vec<u8>) {
+        match self.overlay.as_mut().filter(|overlay| overlay.usable()) {
+            Some(overlay) => overlay.show(self.popup.view()),
+            None => self.popup.draw(self.session.screen(), frame),
+        }
+    }
+
+    /// Cache la liste (restaure l'écran du terminal ou cache la fenêtre).
+    fn hide(&mut self, frame: &mut Vec<u8>) {
+        self.popup.erase(self.session.screen(), frame);
+        self.popup.leave_overlay();
+        if let Some(overlay) = &mut self.overlay {
+            overlay.hide();
+        }
+    }
+
+    /// Transmet à la fenêtre flottante le résultat de la mise à jour.
+    fn flush_overlay(&mut self) {
+        if let Some(overlay) = &mut self.overlay {
+            overlay.flush();
+        }
     }
 }
 
@@ -106,12 +144,14 @@ fn run(args: Args) -> Result<i32> {
     let generators = Generators::start(move || {
         let _ = generated.send(());
     });
+    let (unavailable, unavailable_rx) = mpsc::channel();
     let shared = Arc::new(Mutex::new(Shared {
         session: Session::new(rows, cols),
         popup: Popup::default(),
         completer: Completer::builtin()
             .with_generators(generators)
             .with_usage(load_usage()),
+        overlay: Overlay::spawn(unavailable),
         fallback_cwd,
     }));
     let mut log = open_log();
@@ -158,16 +198,11 @@ fn run(args: Args) -> Result<i32> {
             let mut to_shell = data.to_vec();
             {
                 let mut shared = input_shared.lock().unwrap();
-                let Shared {
-                    session,
-                    popup,
-                    completer,
-                    ..
-                } = &mut *shared;
-                match Key::parse(data).filter(|&key| popup.handles(key)) {
+                match Key::parse(data).filter(|&key| shared.popup.handles(key)) {
                     Some(key) => {
-                        popup.erase(session.screen(), &mut frame);
+                        shared.hide(&mut frame);
                         to_shell.clear();
+                        let popup = &mut shared.popup;
                         match key {
                             Key::Up => popup.select(-1),
                             Key::Down => popup.select(1),
@@ -176,19 +211,20 @@ fn run(args: Args) -> Result<i32> {
                                 to_shell = popup.accept().unwrap_or_default()
                             }
                         }
-                        popup.draw(session.screen(), &mut frame);
+                        shared.show(&mut frame);
                     }
                     None => {
                         // La commande part : la liste ne doit pas rester à l'écran.
                         if Key::submits(data) {
-                            if let Some(line) = session.current_input() {
-                                completer.record(&line);
+                            if let Some(line) = shared.session.current_input() {
+                                shared.completer.record(&line);
                             }
-                            popup.erase(session.screen(), &mut frame);
-                            session.feed_input(b"\r");
+                            shared.hide(&mut frame);
+                            shared.session.feed_input(b"\r");
                         }
                     }
                 }
+                shared.flush_overlay();
                 if !frame.is_empty() {
                     let mut stdout = io::stdout().lock();
                     let _ = stdout.write_all(&frame).and_then(|_| stdout.flush());
@@ -218,6 +254,11 @@ fn run(args: Args) -> Result<i32> {
                     let _ = master.resize(pty_size(rows, cols));
                     let mut shared = resize_shared.lock().unwrap();
                     shared.popup.forget();
+                    shared.popup.leave_overlay();
+                    if let Some(overlay) = &mut shared.overlay {
+                        overlay.hide();
+                        overlay.flush();
+                    }
                     shared.session.resize(rows, cols);
                 }
             }
@@ -234,6 +275,27 @@ fn run(args: Args) -> Result<i32> {
             // Le verrou est gardé pendant l'écriture, comme dans les autres fils.
             let mut shared = generated_shared.lock().unwrap();
             shared.reload(&mut frame);
+            shared.flush_overlay();
+            if !frame.is_empty() {
+                let mut stdout = io::stdout().lock();
+                let _ = stdout.write_all(&frame).and_then(|_| stdout.flush());
+            }
+        }
+    });
+
+    // La fenêtre flottante ne trouve pas le curseur : liste dans le terminal.
+    let fallback_shared = Arc::clone(&shared);
+    thread::spawn(move || {
+        while unavailable_rx.recv().is_ok() {
+            let mut frame = Vec::new();
+            let mut shared = fallback_shared.lock().unwrap();
+            if let Some(overlay) = &mut shared.overlay {
+                overlay.fall_back();
+            }
+            shared.popup.leave_overlay();
+            if shared.session.at_boundary() {
+                shared.show(&mut frame);
+            }
             if !frame.is_empty() {
                 let mut stdout = io::stdout().lock();
                 let _ = stdout.write_all(&frame).and_then(|_| stdout.flush());
@@ -263,11 +325,11 @@ fn run(args: Args) -> Result<i32> {
             frame.clear();
             // La liste est effacée avant la sortie du shell, pour que l'écran
             // corresponde de nouveau à la copie tenue par la session.
-            let Shared { session, popup, .. } = &mut *shared;
-            popup.erase(session.screen(), &mut frame);
+            shared.hide(&mut frame);
             frame.extend_from_slice(&buf[..n]);
-            session.feed_output(&buf[..n]);
+            shared.session.feed_output(&buf[..n]);
             shared.refresh(&mut frame);
+            shared.flush_overlay();
 
             let mut stdout = io::stdout().lock();
             if stdout

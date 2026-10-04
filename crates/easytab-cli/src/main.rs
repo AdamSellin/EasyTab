@@ -184,8 +184,14 @@ fn copy_binaries() -> Result<PathBuf> {
     }
     fs::create_dir_all(&dir).with_context(|| format!("création de {}", dir.display()))?;
     remove_old_copies(&dir);
+    // Fenêtre flottante (Windows) : facultative, la liste peut toujours être
+    // dessinée dans le terminal.
+    let overlay = exe.with_file_name(format!("easytab-overlay{}", std::env::consts::EXE_SUFFIX));
     let mut installed = None;
-    for source in [&exe, &term] {
+    for source in [&exe, &term, &overlay] {
+        if !source.is_file() {
+            continue;
+        }
         let name = source.file_name().context("nom de programme invalide")?;
         let target = dir.join(name);
         replace_file(source, &target)?;
@@ -250,6 +256,19 @@ fn doctor() -> Result<()> {
         mark(term_found),
         term.display()
     );
+    if cfg!(windows) {
+        let overlay =
+            term.with_file_name(format!("easytab-overlay{}", std::env::consts::EXE_SUFFIX));
+        println!(
+            "{} fenêtre flottante : {}",
+            mark(overlay.is_file()),
+            if overlay.is_file() {
+                overlay.display().to_string()
+            } else {
+                "absente, la liste s'affiche dans le terminal".to_string()
+            }
+        );
+    }
     for shell in Shell::ALL {
         let mut installed_in = Vec::new();
         for path in shell.rc_files()? {

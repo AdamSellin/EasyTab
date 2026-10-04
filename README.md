@@ -19,7 +19,13 @@ une liste de suggestions style IDE qui s'affiche pendant que tu tapes une comman
 
 Quand la liste est fermée, Tab garde son comportement habituel (complétion du shell).
 
-La liste ressemble à celle de Fig : une pastille colorée par type (`>` commande, `$` sous-commande,
+Sous Windows, la liste s'affiche dans une fenêtre flottante façon Fig (`easytab-overlay`), placée
+sous le curseur de Windows Terminal ou de VS Code : coins arrondis, ombre, icônes par type (branche
+git, script npm, dossier, fichier, option…) et description en bas. La fenêtre ne prend jamais le
+focus : le clavier reste au terminal. Si elle ne trouve pas le curseur (ou avec
+`EASYTAB_OVERLAY=0`), la liste est dessinée dans le terminal.
+
+Dans le terminal, la liste ressemble aussi à celle de Fig : une pastille colorée par type (`>` commande, `$` sous-commande,
 `-` option, `@` valeur calculée, `/` dossier…), les lettres tapées en gras, les arguments attendus
 en gris (`--cleanup <mode>`) et la description de la suggestion choisie en bas. Avec
 `EASYTAB_ICONS=emoji`, les pastilles deviennent des emoji (📦 🚩 🌿 📁…).

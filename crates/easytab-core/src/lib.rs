@@ -15,6 +15,7 @@ mod files;
 mod generators;
 pub mod line;
 mod osc;
+pub mod overlay;
 mod rank;
 mod session;
 pub mod spec;
