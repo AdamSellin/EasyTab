@@ -1,0 +1,389 @@
+//! Moteur de suggestions : parcourt la spec de la commande en suivant les mots
+//! déjà tapés, puis propose ce qui peut venir à la place du mot en cours.
+
+use std::collections::{HashMap, HashSet};
+use std::path::Path;
+
+use crate::files;
+use crate::line::{self, Token};
+use crate::spec::{Arg, Bundle, Command, Opt, Template};
+
+/// Nombre maximum de suggestions renvoyées.
+const MAX_SUGGESTIONS: usize = 300;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Kind {
+    Command,
+    Subcommand,
+    Option,
+    Value,
+    Folder,
+    File,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Suggestion {
+    /// Texte affiché dans la liste.
+    pub label: String,
+    /// Texte qui remplace le mot en cours, déjà échappé pour le shell.
+    pub insert: String,
+    pub description: Option<String>,
+    pub kind: Kind,
+    /// Ajouter un espace après l'insertion.
+    pub append_space: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Completion {
+    /// Mot en cours tel que tapé : c'est lui que l'insertion remplace.
+    pub replace: String,
+    pub suggestions: Vec<Suggestion>,
+}
+
+pub struct Completer {
+    commands: Vec<Command>,
+    by_name: HashMap<String, usize>,
+}
+
+impl Completer {
+    pub fn new(commands: Vec<Command>) -> Self {
+        let mut by_name = HashMap::new();
+        for (i, command) in commands.iter().enumerate() {
+            for name in &command.names {
+                by_name.entry(name.clone()).or_insert(i);
+            }
+        }
+        Self { commands, by_name }
+    }
+
+    /// Completer avec les specs embarquées.
+    pub fn builtin() -> Self {
+        Self::new(Bundle::builtin().specs)
+    }
+
+    pub fn complete(&self, input: &str, cwd: &Path) -> Completion {
+        let line = line::parse(input);
+        let mut out = Vec::new();
+        self.complete_words(&line.words, &line.current, cwd, &mut out);
+        out.truncate(MAX_SUGGESTIONS);
+        Completion {
+            replace: line.current.raw,
+            suggestions: out,
+        }
+    }
+
+    fn find(&self, name: &str) -> Option<&Command> {
+        // `/usr/bin/git` -> `git`
+        let name = name.rsplit('/').next().unwrap_or(name);
+        self.by_name.get(name).map(|&i| &self.commands[i])
+    }
+
+    fn complete_words(
+        &self,
+        words: &[Token],
+        current: &Token,
+        cwd: &Path,
+        out: &mut Vec<Suggestion>,
+    ) {
+        let Some((name, rest)) = words.split_first() else {
+            self.push_commands(&current.value, out);
+            return;
+        };
+        let Some(spec) = self.find(&name.value) else {
+            return;
+        };
+
+        let mut node = spec;
+        let mut persistent: Vec<&Opt> = node.options.iter().filter(|o| o.persistent).collect();
+        let mut positional = 0;
+        let mut seen_positional = false;
+        let mut pending: Option<&Arg> = None;
+        let mut options_done = false;
+
+        for (i, word) in rest.iter().enumerate() {
+            let word = word.value.as_str();
+            if pending.take().is_some() {
+                continue;
+            }
+            if !options_done && word == "--" {
+                options_done = true;
+                continue;
+            }
+            if !options_done && word.len() > 1 && word.starts_with('-') {
+                let (flag, has_value) = match word.split_once('=') {
+                    Some((flag, _)) => (flag, true),
+                    None => (word, false),
+                };
+                if let Some(opt) = find_option(node, &persistent, flag) {
+                    if !has_value {
+                        pending = opt.args.first().filter(|arg| !arg.optional);
+                    }
+                }
+                continue;
+            }
+            if !seen_positional {
+                if let Some(sub) = find_subcommand(node, word) {
+                    node = sub;
+                    persistent.extend(node.options.iter().filter(|o| o.persistent));
+                    positional = 0;
+                    continue;
+                }
+            }
+            seen_positional = true;
+            if let Some(arg) = node.args.get(positional) {
+                if arg.is_command {
+                    // `sudo git ch` : on recommence avec la commande imbriquée.
+                    return self.complete_words(&rest[i..], current, cwd, out);
+                }
+                if !arg.variadic {
+                    positional += 1;
+                }
+            }
+        }
+
+        let prefix = current.value.as_str();
+        if let Some(arg) = pending {
+            push_arg(arg, prefix, "", cwd, out);
+            return;
+        }
+        if !options_done && prefix.starts_with('-') {
+            if let Some((flag, value)) = prefix.split_once('=') {
+                if let Some(arg) = find_option(node, &persistent, flag).and_then(|o| o.args.first())
+                {
+                    push_arg(arg, value, &format!("{flag}="), cwd, out);
+                }
+            } else {
+                push_options(node, &persistent, prefix, out);
+            }
+            return;
+        }
+        if !seen_positional {
+            push_subcommands(node, prefix, out);
+        }
+        if let Some(arg) = node.args.get(positional) {
+            if arg.is_command {
+                self.push_commands(prefix, out);
+            } else {
+                push_arg(arg, prefix, "", cwd, out);
+            }
+        }
+        if out.is_empty() && prefix.is_empty() {
+            push_options(node, &persistent, prefix, out);
+        }
+    }
+
+    fn push_commands(&self, prefix: &str, out: &mut Vec<Suggestion>) {
+        if prefix.is_empty() {
+            return;
+        }
+        let mut found: Vec<Suggestion> = self
+            .commands
+            .iter()
+            .flat_map(|c| c.names.iter().map(move |n| (n, c)))
+            .filter(|(name, _)| name.starts_with(prefix))
+            .map(|(name, command)| Suggestion {
+                label: name.clone(),
+                insert: name.clone(),
+                description: command.description.clone(),
+                kind: Kind::Command,
+                append_space: true,
+            })
+            .collect();
+        sort(&mut found);
+        out.extend(found);
+    }
+}
+
+fn find_subcommand<'a>(node: &'a Command, word: &str) -> Option<&'a Command> {
+    node.subcommands
+        .iter()
+        .find(|s| s.names.iter().any(|n| n == word))
+}
+
+fn find_option<'a>(node: &'a Command, persistent: &[&'a Opt], flag: &str) -> Option<&'a Opt> {
+    node.options
+        .iter()
+        .chain(persistent.iter().copied())
+        .find(|o| o.names.iter().any(|n| n == flag))
+}
+
+fn push_subcommands(node: &Command, prefix: &str, out: &mut Vec<Suggestion>) {
+    let mut found: Vec<Suggestion> = node
+        .subcommands
+        .iter()
+        .filter(|s| !s.hidden)
+        .filter_map(|s| {
+            let name = s.names.iter().find(|n| n.starts_with(prefix))?;
+            Some(Suggestion {
+                label: name.clone(),
+                insert: s.insert.clone().unwrap_or_else(|| name.clone()),
+                description: s.description.clone(),
+                kind: Kind::Subcommand,
+                append_space: true,
+            })
+        })
+        .collect();
+    sort(&mut found);
+    out.extend(found);
+}
+
+fn push_options(node: &Command, persistent: &[&Opt], prefix: &str, out: &mut Vec<Suggestion>) {
+    let mut seen = HashSet::new();
+    let mut found: Vec<Suggestion> = node
+        .options
+        .iter()
+        .chain(persistent.iter().copied())
+        .filter(|o| !o.hidden && seen.insert(o.names.first()))
+        .filter_map(|o| {
+            let name = o.names.iter().find(|n| n.starts_with(prefix))?;
+            let takes_equals = o.requires_equals && !o.args.is_empty();
+            let insert = match &o.insert {
+                Some(insert) => insert.clone(),
+                None if takes_equals => format!("{name}="),
+                None => name.clone(),
+            };
+            Some(Suggestion {
+                label: o.names.join(", "),
+                insert,
+                description: o.description.clone(),
+                kind: Kind::Option,
+                append_space: !takes_equals,
+            })
+        })
+        .collect();
+    sort(&mut found);
+    out.extend(found);
+}
+
+fn push_arg(arg: &Arg, prefix: &str, insert_prefix: &str, cwd: &Path, out: &mut Vec<Suggestion>) {
+    let mut found: Vec<Suggestion> = arg
+        .suggestions
+        .iter()
+        .filter(|v| !v.hidden)
+        .filter_map(|v| {
+            let name = v.names.iter().find(|n| n.starts_with(prefix))?;
+            let insert = v.insert.clone().unwrap_or_else(|| line::escape(name));
+            Some(Suggestion {
+                label: name.clone(),
+                append_space: !insert.ends_with(['/', '=']),
+                insert: format!("{insert_prefix}{insert}"),
+                description: v.description.clone().or_else(|| arg.description.clone()),
+                kind: Kind::Value,
+            })
+        })
+        .collect();
+    sort(&mut found);
+    out.extend(found);
+
+    if arg.templates.is_empty() {
+        return;
+    }
+    let folders_only = !arg.templates.contains(&Template::Filepaths);
+    out.extend(
+        files::complete(cwd, prefix, folders_only)
+            .into_iter()
+            .map(|entry| Suggestion {
+                label: entry.name,
+                insert: format!("{insert_prefix}{}", line::escape(&entry.path)),
+                description: None,
+                kind: if entry.is_dir {
+                    Kind::Folder
+                } else {
+                    Kind::File
+                },
+                append_space: !entry.is_dir,
+            }),
+    );
+}
+
+fn sort(found: &mut [Suggestion]) {
+    found.sort_by(|a, b| a.label.cmp(&b.label));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    fn completer() -> &'static Completer {
+        use std::sync::OnceLock;
+        static COMPLETER: OnceLock<Completer> = OnceLock::new();
+        COMPLETER.get_or_init(Completer::builtin)
+    }
+
+    fn labels(input: &str) -> Vec<String> {
+        completer()
+            .complete(input, &PathBuf::from("/nonexistent"))
+            .suggestions
+            .into_iter()
+            .map(|s| s.label)
+            .collect()
+    }
+
+    #[test]
+    fn suggests_commands_with_specs() {
+        let found = labels("gi");
+        assert!(found.contains(&"git".to_string()), "{found:?}");
+        assert!(labels("").is_empty());
+    }
+
+    #[test]
+    fn suggests_subcommands() {
+        let found = labels("git ch");
+        assert!(found.contains(&"checkout".to_string()), "{found:?}");
+        assert!(found.contains(&"cherry-pick".to_string()), "{found:?}");
+        assert!(found.iter().all(|l| l.starts_with("ch")), "{found:?}");
+    }
+
+    #[test]
+    fn suggests_options_of_the_current_subcommand() {
+        let found = labels("git commit --am");
+        assert_eq!(found, ["--amend"]);
+    }
+
+    #[test]
+    fn suggests_option_values() {
+        let found = labels("git commit --cleanup ");
+        assert!(found.contains(&"verbatim".to_string()), "{found:?}");
+    }
+
+    #[test]
+    fn follows_nested_commands() {
+        let found = labels("sudo git ch");
+        assert!(found.contains(&"checkout".to_string()), "{found:?}");
+        let found = labels("sudo gi");
+        assert!(found.contains(&"git".to_string()), "{found:?}");
+    }
+
+    #[test]
+    fn unknown_commands_give_nothing() {
+        assert!(labels("commande-inconnue --").is_empty());
+    }
+
+    #[test]
+    fn reports_the_word_to_replace() {
+        let completion = completer().complete("git 'ch", Path::new("/"));
+        assert_eq!(completion.replace, "'ch");
+    }
+
+    #[test]
+    fn suggests_files_for_path_arguments() {
+        let dir = std::env::temp_dir().join(format!("easytab-complete-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("mon dossier")).unwrap();
+        std::fs::write(dir.join("notes.txt"), "").unwrap();
+
+        let completion = completer().complete("cd m", &dir);
+        let first = &completion.suggestions[0];
+        assert_eq!(first.insert, r"mon\ dossier/");
+        assert_eq!(first.kind, Kind::Folder);
+        assert!(!first.append_space);
+
+        let found: Vec<_> = completer()
+            .complete("cat n", &dir)
+            .suggestions
+            .into_iter()
+            .map(|s| s.insert)
+            .collect();
+        assert_eq!(found, ["notes.txt"]);
+    }
+}

@@ -7,7 +7,7 @@ if [[ -z "$EASYTAB_TERM" && -z "$EASYTAB_DISABLE" && $- == *i* && -t 0 && -t 1 ]
   exec __EASYTAB_TERM_BIN__ --shell "${BASH:-bash}"
 fi
 
-# 2. Sous EasyTab : émet les marqueurs de prompt OSC 133.
+# 2. Sous EasyTab : émet les marqueurs de prompt (OSC 133) et le dossier courant (OSC 7).
 # bash n'a pas de hook avant l'exécution : easytab-term détecte la touche Entrée.
 if [[ -n "$EASYTAB_TERM" && -z "$__easytab_loaded" ]]; then
   __easytab_loaded=1
@@ -17,7 +17,7 @@ if [[ -n "$EASYTAB_TERM" && -z "$__easytab_loaded" ]]; then
   }
 
   __easytab_prompt() {
-    printf '\e]133;D;%s\a\e]133;A\a' "$__easytab_status"
+    printf '\e]133;D;%s\a\e]7;file://%s%s\a\e]133;A\a' "$__easytab_status" "$HOSTNAME" "${PWD// /%20}"
     # Ajouté à chaque prompt, car certains thèmes réécrivent PS1.
     [[ "$PS1" == *'\e]133;B\a'* ]] || PS1="$PS1"'\[\e]133;B\a\]'
     return "$__easytab_status"

@@ -1,9 +1,13 @@
 //! `easytab-term` : lance le shell dans un pseudo-terminal et relaie tout entre
 //! le vrai terminal et ce shell, en gardant une copie de l'écran pour savoir ce
-//! que l'utilisateur tape. Pour l'instant il ne modifie rien au flux.
+//! que l'utilisateur tape. Il affiche la liste de suggestions par-dessus et
+//! intercepte ↑, ↓, Tab et Échap quand elle est visible.
+
+mod popup;
 
 use std::fs::{File, OpenOptions};
 use std::io::{self, Read, Write};
+use std::path::PathBuf;
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -12,7 +16,8 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use clap::Parser;
 use crossterm::terminal;
-use easytab_core::Session;
+use easytab_core::{Completer, Session};
+use popup::{Key, Popup};
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 
 /// Variable posée dans l'environnement du shell lancé, pour que l'intégration
@@ -20,6 +25,27 @@ use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 const ACTIVE_ENV: &str = "EASYTAB_TERM";
 /// Si elle est définie, chaque changement de la ligne en cours y est journalisé.
 const LOG_ENV: &str = "EASYTAB_LOG";
+
+/// État partagé entre les fils clavier, écran et redimensionnement.
+struct Shared {
+    session: Session,
+    popup: Popup,
+    completer: Completer,
+    /// Dossier utilisé tant que le shell n'a pas annoncé le sien (`OSC 7`).
+    fallback_cwd: PathBuf,
+}
+
+impl Shared {
+    /// Recalcule et redessine la liste si l'écran est dans un état stable.
+    fn refresh(&mut self, frame: &mut Vec<u8>) {
+        if !self.session.at_boundary() {
+            return;
+        }
+        self.popup
+            .update(&self.session, &self.completer, &self.fallback_cwd);
+        self.popup.draw(self.session.screen(), frame);
+    }
+}
 
 #[derive(Parser)]
 #[command(version, about = "Lance un shell sous EasyTab")]
@@ -49,9 +75,8 @@ fn run(args: Args) -> Result<i32> {
         .context("ouverture du pseudo-terminal")?;
     let mut cmd = CommandBuilder::new(&shell);
     cmd.args(&args.args);
-    if let Ok(dir) = std::env::current_dir() {
-        cmd.cwd(dir);
-    }
+    let fallback_cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"));
+    cmd.cwd(&fallback_cwd);
     cmd.env(ACTIVE_ENV, "1");
     let mut child = pair
         .slave
@@ -62,22 +87,58 @@ fn run(args: Args) -> Result<i32> {
     let mut reader = pair.master.try_clone_reader()?;
     let mut writer = pair.master.take_writer()?;
     let master = pair.master;
-    let session = Arc::new(Mutex::new(Session::new(rows, cols)));
+    let shared = Arc::new(Mutex::new(Shared {
+        session: Session::new(rows, cols),
+        popup: Popup::default(),
+        completer: Completer::builtin(),
+        fallback_cwd,
+    }));
     let mut log = open_log();
 
     let raw_mode = RawMode::enable()?;
 
     // Clavier -> shell.
-    let input_session = Arc::clone(&session);
+    let input_shared = Arc::clone(&shared);
     thread::spawn(move || {
         let mut stdin = io::stdin().lock();
         let mut buf = [0u8; 4096];
         while let Ok(n @ 1..) = stdin.read(&mut buf) {
-            input_session.lock().unwrap().feed_input(&buf[..n]);
-            if writer
-                .write_all(&buf[..n])
-                .and_then(|_| writer.flush())
-                .is_err()
+            let data = &buf[..n];
+            let mut frame = Vec::new();
+            let mut to_shell = data.to_vec();
+            {
+                let mut shared = input_shared.lock().unwrap();
+                let Shared { session, popup, .. } = &mut *shared;
+                match Key::parse(data).filter(|_| popup.is_shown()) {
+                    Some(key) => {
+                        popup.erase(session.screen(), &mut frame);
+                        to_shell.clear();
+                        match key {
+                            Key::Up => popup.select(-1),
+                            Key::Down => popup.select(1),
+                            Key::Dismiss => popup.dismiss(),
+                            Key::Accept => to_shell = popup.accept().unwrap_or_default(),
+                        }
+                        popup.draw(session.screen(), &mut frame);
+                    }
+                    None => {
+                        // La commande part : la liste ne doit pas rester à l'écran.
+                        if data.contains(&b'\r') {
+                            popup.erase(session.screen(), &mut frame);
+                        }
+                        session.feed_input(data);
+                    }
+                }
+                if !frame.is_empty() {
+                    let mut stdout = io::stdout().lock();
+                    let _ = stdout.write_all(&frame).and_then(|_| stdout.flush());
+                }
+            }
+            if !to_shell.is_empty()
+                && writer
+                    .write_all(&to_shell)
+                    .and_then(|_| writer.flush())
+                    .is_err()
             {
                 break;
             }
@@ -85,7 +146,7 @@ fn run(args: Args) -> Result<i32> {
     });
 
     // Suit la taille du terminal (fonctionne aussi sous Windows, sans SIGWINCH).
-    let resize_session = Arc::clone(&session);
+    let resize_shared = Arc::clone(&shared);
     thread::spawn(move || {
         let mut current = (cols, rows);
         loop {
@@ -95,7 +156,9 @@ fn run(args: Args) -> Result<i32> {
                     current = size;
                     let (cols, rows) = size;
                     let _ = master.resize(pty_size(rows, cols));
-                    resize_session.lock().unwrap().resize(rows, cols);
+                    let mut shared = resize_shared.lock().unwrap();
+                    shared.popup.forget();
+                    shared.session.resize(rows, cols);
                 }
             }
         }
@@ -103,25 +166,34 @@ fn run(args: Args) -> Result<i32> {
 
     // Shell -> écran.
     let (output_done, output_finished) = mpsc::channel();
-    let output_session = Arc::clone(&session);
+    let output_shared = Arc::clone(&shared);
     thread::spawn(move || {
-        let mut stdout = io::stdout().lock();
         let mut buf = [0u8; 16 * 1024];
+        let mut frame = Vec::new();
         let mut last_input = None;
         while let Ok(n @ 1..) = reader.read(&mut buf) {
+            let mut shared = output_shared.lock().unwrap();
+            frame.clear();
+            // La liste est effacée avant la sortie du shell, pour que l'écran
+            // corresponde de nouveau à la copie tenue par la session.
+            let Shared { session, popup, .. } = &mut *shared;
+            popup.erase(session.screen(), &mut frame);
+            frame.extend_from_slice(&buf[..n]);
+            session.feed_output(&buf[..n]);
+            shared.refresh(&mut frame);
+
+            let mut stdout = io::stdout().lock();
             if stdout
-                .write_all(&buf[..n])
+                .write_all(&frame)
                 .and_then(|_| stdout.flush())
                 .is_err()
             {
                 break;
             }
-            let mut session = output_session.lock().unwrap();
-            session.feed_output(&buf[..n]);
             if let Some(log) = log.as_mut() {
-                let input = session.current_input();
+                let input = shared.session.current_input();
                 if input != last_input {
-                    let _ = writeln!(log, "{:?} {:?}", session.phase(), input);
+                    let _ = writeln!(log, "{:?} {:?}", shared.session.phase(), input);
                     last_input = input;
                 }
             }

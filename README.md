@@ -3,18 +3,30 @@
 Autocomplétion graphique pour le terminal (Windows, Linux, macOS), dans l'esprit de Fig :
 une liste de suggestions style IDE qui s'affiche pendant que tu tapes une commande.
 
-> **État : squelette.** Le wrapper PTY tourne et sait déjà quelle commande est en cours
-> de saisie, mais n'affiche pas encore de suggestions. Voir le plan dans
-> [docs/architecture.md](docs/architecture.md).
+> **État : premières suggestions.** Une liste s'affiche dans le terminal pendant la frappe,
+> pour 47 commandes courantes (git, docker, npm, cargo, kubectl…) et les fichiers et
+> dossiers. Voir la suite du plan dans [docs/architecture.md](docs/architecture.md).
+
+## Utilisation
+
+| Touche | Action |
+|---|---|
+| ↑ / ↓ | Choisir une suggestion |
+| Tab | Insérer la suggestion choisie |
+| Échap | Fermer la liste jusqu'à la prochaine frappe |
+
+Quand la liste est fermée, Tab garde son comportement habituel (complétion du shell).
 
 ## Organisation
 
 | Dossier | Rôle |
 |---|---|
-| `crates/easytab-core` | Suit l'état du shell (marqueurs de prompt `OSC 133` + copie de l'écran) et en déduit la ligne en cours. Accueillera le moteur de suggestions. |
-| `crates/easytab-term` | Wrapper PTY : lance le shell dans un pseudo-terminal et relaie clavier et écran. |
+| `crates/easytab-core` | Suit l'état du shell (marqueurs de prompt `OSC 133`, dossier courant `OSC 7`, copie de l'écran) et transforme la ligne en cours en suggestions à partir des specs. |
+| `crates/easytab-term` | Wrapper PTY : lance le shell dans un pseudo-terminal, relaie clavier et écran, dessine la liste de suggestions. |
 | `crates/easytab-cli` | Commande `easytab` : `install`, `uninstall`, `doctor`, `init`. |
 | `shell-integration/` | Scripts zsh et bash qui relancent le shell sous `easytab-term` et émettent les marqueurs de prompt. |
+| `specs/` | Specs de complétion importées de Fig (voir [specs/README.md](specs/README.md)). |
+| `tools/` | Script d'import des specs Fig. |
 
 ## Essayer
 

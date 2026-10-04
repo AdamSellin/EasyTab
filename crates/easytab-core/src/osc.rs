@@ -1,5 +1,7 @@
-/// Marqueurs de prompt sémantiques (`OSC 133`, format FinalTerm).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+use std::path::PathBuf;
+
+/// Séquences émises par l'intégration shell.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Marker {
     /// `OSC 133;A` : le shell commence à afficher le prompt.
     PromptStart,
@@ -9,31 +11,43 @@ pub enum Marker {
     CommandStart,
     /// `OSC 133;D[;code]` : la commande est terminée.
     CommandEnd { exit_code: Option<i32> },
+    /// `OSC 7;file://hôte/chemin` : dossier courant du shell.
+    WorkingDirectory(PathBuf),
 }
 
 /// Taille maximale du corps d'une séquence OSC conservée en mémoire.
-const MAX_OSC_LEN: usize = 128;
+const MAX_OSC_LEN: usize = 4096;
 
 #[derive(Debug, Default)]
 enum State {
     #[default]
     Ground,
     Escape,
+    /// `ESC` suivi d'octets intermédiaires, comme `ESC ( B`.
+    EscapeIntermediate,
+    Csi,
     Osc,
     OscEscape,
 }
 
-/// Détecte les séquences `OSC 133` dans un flux d'octets, même coupées entre
-/// deux lectures.
+/// Suit le flux de sortie du shell : repère les séquences d'intégration et sait
+/// si le flux est entre deux séquences (on peut alors y insérer du texte sans
+/// casser une séquence ou un caractère UTF-8 en cours).
 #[derive(Debug, Default)]
 pub struct OscScanner {
     state: State,
     body: Vec<u8>,
+    utf8_pending: u8,
 }
 
 impl OscScanner {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Vrai si aucun échappement ni caractère UTF-8 n'est en cours.
+    pub fn is_idle(&self) -> bool {
+        matches!(self.state, State::Ground) && self.utf8_pending == 0
     }
 
     /// Avance d'un octet ; renvoie un marqueur quand une séquence se termine sur
@@ -42,7 +56,10 @@ impl OscScanner {
         match self.state {
             State::Ground => {
                 if byte == 0x1b {
+                    self.utf8_pending = 0;
                     self.state = State::Escape;
+                } else {
+                    self.track_utf8(byte);
                 }
                 None
             }
@@ -52,9 +69,25 @@ impl OscScanner {
                         self.body.clear();
                         State::Osc
                     }
+                    b'[' => State::Csi,
                     0x1b => State::Escape,
+                    0x20..=0x2f => State::EscapeIntermediate,
                     _ => State::Ground,
                 };
+                None
+            }
+            State::EscapeIntermediate => {
+                if !(0x20..=0x2f).contains(&byte) {
+                    self.state = State::Ground;
+                }
+                None
+            }
+            State::Csi => {
+                if (0x40..=0x7e).contains(&byte) {
+                    self.state = State::Ground;
+                } else if byte == 0x1b {
+                    self.state = State::Escape;
+                }
                 None
             }
             State::Osc => match byte {
@@ -88,13 +121,26 @@ impl OscScanner {
         }
     }
 
+    fn track_utf8(&mut self, byte: u8) {
+        self.utf8_pending = match byte {
+            0x80..=0xbf => self.utf8_pending.saturating_sub(1),
+            0xc0..=0xdf => 1,
+            0xe0..=0xef => 2,
+            0xf0..=0xf7 => 3,
+            _ => 0,
+        };
+    }
+
     fn finish(&mut self) -> Option<Marker> {
         self.state = State::Ground;
-        parse_osc_133(&self.body)
+        parse_osc(&self.body)
     }
 }
 
-fn parse_osc_133(body: &[u8]) -> Option<Marker> {
+fn parse_osc(body: &[u8]) -> Option<Marker> {
+    if let Some(url) = body.strip_prefix(b"7;") {
+        return parse_file_url(url).map(Marker::WorkingDirectory);
+    }
     let rest = body.strip_prefix(b"133;")?;
     let (&kind, params) = rest.split_first()?;
     match kind {
@@ -111,6 +157,31 @@ fn parse_osc_133(body: &[u8]) -> Option<Marker> {
         }
         _ => None,
     }
+}
+
+/// `file://hôte/chemin%20encodé` -> `/chemin encodé`.
+fn parse_file_url(url: &[u8]) -> Option<PathBuf> {
+    let rest = url.strip_prefix(b"file://")?;
+    let path = &rest[rest.iter().position(|&b| b == b'/')?..];
+    let mut decoded = Vec::with_capacity(path.len());
+    let mut i = 0;
+    while i < path.len() {
+        let hex = path
+            .get(i + 1..i + 3)
+            .and_then(|h| std::str::from_utf8(h).ok())
+            .and_then(|h| u8::from_str_radix(h, 16).ok());
+        match (path[i], hex) {
+            (b'%', Some(byte)) => {
+                decoded.push(byte);
+                i += 3;
+            }
+            (byte, _) => {
+                decoded.push(byte);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8(decoded).ok().map(PathBuf::from)
 }
 
 #[cfg(test)]
@@ -148,6 +219,16 @@ mod tests {
     }
 
     #[test]
+    fn parses_working_directory() {
+        assert_eq!(
+            scan(b"\x1b]7;file://machine/home/adam/mes%20projets\x07"),
+            [Marker::WorkingDirectory(PathBuf::from(
+                "/home/adam/mes projets"
+            ))]
+        );
+    }
+
+    #[test]
     fn ignores_other_osc_sequences() {
         assert_eq!(scan(b"\x1b]0;titre\x07\x1b]1337;x\x07\x1b[31mrouge"), []);
     }
@@ -160,5 +241,25 @@ mod tests {
             found.extend(chunk.iter().filter_map(|&b| scanner.push(b)));
         }
         assert_eq!(found, [Marker::InputStart]);
+    }
+
+    #[test]
+    fn knows_when_a_sequence_is_unfinished() {
+        let mut scanner = OscScanner::new();
+        let mut feed = |bytes: &[u8]| {
+            bytes.iter().for_each(|&b| {
+                scanner.push(b);
+            });
+            scanner.is_idle()
+        };
+        assert!(feed(b"abc"));
+        assert!(!feed(b"\x1b[3"));
+        assert!(feed(b"1m"));
+        assert!(!feed(b"\x1b("));
+        assert!(feed(b"B"));
+        assert!(!feed(&"é".as_bytes()[..1]));
+        assert!(feed(&"é".as_bytes()[1..]));
+        assert!(!feed(b"\x1b]0;ti"));
+        assert!(feed(b"tre\x07"));
     }
 }
