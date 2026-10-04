@@ -57,6 +57,9 @@ pub struct Popup {
     last_input: Option<String>,
     /// Ligne pour laquelle l'utilisateur a fermé la liste avec Échap.
     dismissed_for: Option<String>,
+    /// De nouvelles suggestions dynamiques sont arrivées : recalculer même si la
+    /// ligne n'a pas changé.
+    stale: bool,
 }
 
 impl Popup {
@@ -68,11 +71,18 @@ impl Popup {
     /// Recalcule les suggestions si la ligne en cours a changé.
     pub fn update(&mut self, session: &Session, completer: &Completer, fallback_cwd: &Path) {
         let input = session.current_input();
-        if input == self.last_input {
+        let stale = std::mem::take(&mut self.stale);
+        if input == self.last_input && !stale {
             return;
         }
+        // Mêmes mots, nouveaux résultats : la sélection reste sur le même nom.
+        let keep = self
+            .completion
+            .take()
+            .filter(|_| input == self.last_input)
+            .and_then(|c| c.suggestions.into_iter().nth(self.selected))
+            .map(|s| s.label);
         self.last_input = input.clone();
-        self.completion = None;
         self.selected = 0;
         self.scroll = 0;
 
@@ -92,8 +102,21 @@ impl Popup {
             [only] if only.insert == completion.replace
         );
         if !completion.suggestions.is_empty() && !only_exact {
+            if let Some(label) = keep {
+                self.selected = completion
+                    .suggestions
+                    .iter()
+                    .position(|s| s.label == label)
+                    .unwrap_or(0);
+            }
             self.completion = Some(completion);
         }
+    }
+
+    /// Les suggestions dynamiques ont changé : la prochaine mise à jour
+    /// recalcule la liste.
+    pub fn reload(&mut self) {
+        self.stale = true;
     }
 
     /// Oublie la liste sans restaurer l'écran (après un redimensionnement, le

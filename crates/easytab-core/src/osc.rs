@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Séquences émises par l'intégration shell.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -184,6 +184,25 @@ fn parse_file_url(url: &[u8]) -> Option<PathBuf> {
     String::from_utf8(decoded).ok().map(PathBuf::from)
 }
 
+/// Git Bash annonce ses dossiers à la façon MSYS (`/c/Users/adam`) ; les
+/// programmes Windows les veulent sous la forme `C:/Users/adam`.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub(crate) fn msys_to_windows(path: &Path) -> Option<PathBuf> {
+    let path = path.to_str()?;
+    let rest = path.strip_prefix('/')?;
+    let mut chars = rest.chars();
+    let drive = chars.next().filter(char::is_ascii_alphabetic)?;
+    let after = chars.as_str();
+    if !(after.is_empty() || after.starts_with('/')) {
+        return None;
+    }
+    Some(PathBuf::from(format!(
+        "{}:/{}",
+        drive.to_ascii_uppercase(),
+        after.trim_start_matches('/')
+    )))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -261,5 +280,14 @@ mod tests {
         assert!(feed(&"é".as_bytes()[1..]));
         assert!(!feed(b"\x1b]0;ti"));
         assert!(feed(b"tre\x07"));
+    }
+
+    #[test]
+    fn converts_msys_paths() {
+        let convert = |p: &str| msys_to_windows(Path::new(p)).map(|p| p.display().to_string());
+        assert_eq!(convert("/c/Users/adam").as_deref(), Some("C:/Users/adam"));
+        assert_eq!(convert("/d").as_deref(), Some("D:/"));
+        assert_eq!(convert("/usr/bin"), None);
+        assert_eq!(convert("/tmp"), None);
     }
 }
