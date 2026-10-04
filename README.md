@@ -35,7 +35,28 @@ liste dès que le résultat arrive. La frappe n'attend jamais.
 | `specs/` | Specs de complétion importées de Fig (voir [specs/README.md](specs/README.md)). |
 | `tools/` | Script d'import des specs Fig. |
 
-## Essayer
+## Installer
+
+Sans Rust ni compilation, depuis la dernière [version publiée](https://github.com/AdamSellin/EasyTab/releases) :
+
+```sh
+# Linux, macOS
+curl -fsSL https://github.com/AdamSellin/EasyTab/releases/latest/download/install.sh | sh
+```
+
+```powershell
+# Windows (pour Git Bash dans Windows Terminal ou VS Code)
+irm https://github.com/AdamSellin/EasyTab/releases/latest/download/install.ps1 | iex
+```
+
+Le script copie `easytab` et `easytab-term` dans `~/.easytab/bin` et ajoute EasyTab à la config
+du shell. Relancer la même commande met à jour. Ouvre ensuite un nouveau terminal.
+
+Publier une version : `git tag v0.2.0 && git push origin v0.2.0`. Le workflow `Release`
+compile pour Linux, macOS (Intel et Apple Silicon) et Windows, puis publie les archives et les
+scripts d'installation.
+
+## Compiler depuis les sources
 
 Prérequis : [Rust](https://rustup.rs) stable. Shells pris en charge pour l'instant : zsh et bash
 (Linux, macOS), et Git Bash sous Windows dans Windows Terminal ou le terminal de VS Code. La fenêtre

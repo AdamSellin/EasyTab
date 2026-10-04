@@ -199,7 +199,13 @@ fn uninstall(shell: Shell) -> Result<()> {
 }
 
 fn doctor() -> Result<()> {
-    let term = term_binary();
+    // La copie installée est celle que lance le shell, pas celle d'à côté.
+    let name = format!("easytab-term{}", std::env::consts::EXE_SUFFIX);
+    let term = install_dir()
+        .map(|dir| dir.join(&name))
+        .ok()
+        .filter(|path| path.is_file())
+        .unwrap_or_else(term_binary);
     let term_found = term.is_file() || which(&term).is_some();
     println!(
         "{} wrapper easytab-term : {}",
