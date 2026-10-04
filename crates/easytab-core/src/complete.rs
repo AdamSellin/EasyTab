@@ -414,7 +414,6 @@ fn sort(found: &mut [Suggestion]) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Generators;
     use std::path::PathBuf;
 
     fn completer() -> &'static Completer {
@@ -502,6 +501,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn suggests_git_branches_from_generators() {
+        use crate::Generators;
         use std::process::Command as Process;
         use std::sync::mpsc;
         use std::time::Duration;

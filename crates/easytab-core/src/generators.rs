@@ -76,7 +76,7 @@ impl Generators {
         Self::spawn(|| Modules::builtin().modules, notify)
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     fn start_with(modules: HashMap<String, String>, notify: impl Fn() + Send + 'static) -> Self {
         Self::spawn(move || modules, notify)
     }
@@ -315,6 +315,7 @@ mod tests {
         words.iter().map(|w| w.to_string()).collect()
     }
 
+    #[cfg(unix)]
     fn names(items: &[Item]) -> Vec<&str> {
         items.iter().map(|i| i.names[0].as_str()).collect()
     }
