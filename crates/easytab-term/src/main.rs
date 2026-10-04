@@ -214,13 +214,36 @@ fn run(args: Args) -> Result<i32> {
     Ok(status.exit_code() as i32)
 }
 
-/// EasyTab a besoin d'un vrai terminal des deux côtés. Sous Windows, mintty
-/// (fenêtre « Git Bash » par défaut) ne fournit pas de console aux programmes
-/// Windows : la pseudo-console attendrait une réponse qui ne vient jamais.
+/// EasyTab a besoin d'un vrai terminal des deux côtés.
 fn terminal_supported() -> bool {
-    io::stdin().is_terminal()
-        && io::stdout().is_terminal()
-        && !(cfg!(windows) && std::env::var("TERM_PROGRAM").as_deref() == Ok("mintty"))
+    if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
+        return false;
+    }
+    if !stdin_is_console() {
+        // mintty (fenêtre « Git Bash » par défaut) ne donne qu'un tuyau aux
+        // programmes Windows : la frappe n'arrive qu'à l'appui sur Entrée.
+        eprintln!(
+            "easytab : ce terminal ne fournit pas de console Windows, les suggestions sont \
+             désactivées. Ouvre Git Bash dans Windows Terminal ou VS Code pour les avoir."
+        );
+        return false;
+    }
+    true
+}
+
+/// Sous Windows, vrai si l'entrée est une console (et pas un tuyau, même
+/// présenté comme un terminal par MSYS).
+#[cfg(windows)]
+fn stdin_is_console() -> bool {
+    use windows_sys::Win32::System::Console::{GetConsoleMode, GetStdHandle, STD_INPUT_HANDLE};
+    let mut mode = 0;
+    // SAFETY: appels Win32 sans pointeur conservé ; `mode` vit pendant l'appel.
+    unsafe { GetConsoleMode(GetStdHandle(STD_INPUT_HANDLE), &mut mode) != 0 }
+}
+
+#[cfg(not(windows))]
+fn stdin_is_console() -> bool {
+    true
 }
 
 /// Lance le shell sans EasyTab, avec l'intégration désactivée.
@@ -263,17 +286,80 @@ fn open_log() -> Option<File> {
 }
 
 /// Remet le terminal en mode normal même en cas d'erreur.
-struct RawMode;
+struct RawMode {
+    #[cfg(windows)]
+    console: vt::Saved,
+}
 
 impl RawMode {
     fn enable() -> Result<Self> {
         terminal::enable_raw_mode().context("passage du terminal en mode brut")?;
-        Ok(Self)
+        Ok(Self {
+            #[cfg(windows)]
+            console: vt::enable(),
+        })
     }
 }
 
 impl Drop for RawMode {
     fn drop(&mut self) {
+        #[cfg(windows)]
+        vt::restore(&self.console);
         let _ = terminal::disable_raw_mode();
+    }
+}
+
+/// Modes VT de la console Windows. Sans eux, les réponses du terminal (dont
+/// celle à `ESC[6n`, que la pseudo-console attend avant d'afficher quoi que ce
+/// soit) et les flèches n'arrivent pas sous forme de séquences.
+#[cfg(windows)]
+mod vt {
+    use windows_sys::Win32::System::Console::{
+        GetConsoleMode, GetStdHandle, SetConsoleMode, CONSOLE_MODE, DISABLE_NEWLINE_AUTO_RETURN,
+        ENABLE_VIRTUAL_TERMINAL_INPUT, ENABLE_VIRTUAL_TERMINAL_PROCESSING, STD_HANDLE,
+        STD_INPUT_HANDLE, STD_OUTPUT_HANDLE,
+    };
+
+    /// Modes d'origine de l'entrée et de la sortie, à remettre en partant.
+    pub struct Saved {
+        input: Option<CONSOLE_MODE>,
+        output: Option<CONSOLE_MODE>,
+    }
+
+    pub fn enable() -> Saved {
+        Saved {
+            input: add_mode(STD_INPUT_HANDLE, ENABLE_VIRTUAL_TERMINAL_INPUT),
+            output: add_mode(
+                STD_OUTPUT_HANDLE,
+                ENABLE_VIRTUAL_TERMINAL_PROCESSING | DISABLE_NEWLINE_AUTO_RETURN,
+            ),
+        }
+    }
+
+    pub fn restore(saved: &Saved) {
+        for (handle, mode) in [
+            (STD_INPUT_HANDLE, saved.input),
+            (STD_OUTPUT_HANDLE, saved.output),
+        ] {
+            if let Some(mode) = mode {
+                // SAFETY: appel Win32 sur un handle standard du processus.
+                unsafe { SetConsoleMode(GetStdHandle(handle), mode) };
+            }
+        }
+    }
+
+    /// Ajoute `flags` au mode de la console ; renvoie l'ancien mode.
+    fn add_mode(handle: STD_HANDLE, flags: CONSOLE_MODE) -> Option<CONSOLE_MODE> {
+        let mut mode = 0;
+        // SAFETY: appels Win32 sur un handle standard du processus ; `mode`
+        // vit pendant l'appel.
+        unsafe {
+            let handle = GetStdHandle(handle);
+            if GetConsoleMode(handle, &mut mode) == 0 {
+                return None;
+            }
+            SetConsoleMode(handle, mode | flags);
+        }
+        Some(mode)
     }
 }
