@@ -214,13 +214,36 @@ fn run(args: Args) -> Result<i32> {
     Ok(status.exit_code() as i32)
 }
 
-/// EasyTab a besoin d'un vrai terminal des deux côtés. Sous Windows, mintty
-/// (fenêtre « Git Bash » par défaut) ne fournit pas de console aux programmes
-/// Windows : la pseudo-console attendrait une réponse qui ne vient jamais.
+/// EasyTab a besoin d'un vrai terminal des deux côtés.
 fn terminal_supported() -> bool {
-    io::stdin().is_terminal()
-        && io::stdout().is_terminal()
-        && !(cfg!(windows) && std::env::var("TERM_PROGRAM").as_deref() == Ok("mintty"))
+    if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
+        return false;
+    }
+    if !stdin_is_console() {
+        // mintty (fenêtre « Git Bash » par défaut) ne donne qu'un tuyau aux
+        // programmes Windows : la frappe n'arrive qu'à l'appui sur Entrée.
+        eprintln!(
+            "easytab : ce terminal ne fournit pas de console Windows, les suggestions sont \
+             désactivées. Ouvre Git Bash dans Windows Terminal ou VS Code pour les avoir."
+        );
+        return false;
+    }
+    true
+}
+
+/// Sous Windows, vrai si l'entrée est une console (et pas un tuyau, même
+/// présenté comme un terminal par MSYS).
+#[cfg(windows)]
+fn stdin_is_console() -> bool {
+    use windows_sys::Win32::System::Console::{GetConsoleMode, GetStdHandle, STD_INPUT_HANDLE};
+    let mut mode = 0;
+    // SAFETY: appels Win32 sans pointeur conservé ; `mode` vit pendant l'appel.
+    unsafe { GetConsoleMode(GetStdHandle(STD_INPUT_HANDLE), &mut mode) != 0 }
+}
+
+#[cfg(not(windows))]
+fn stdin_is_console() -> bool {
+    true
 }
 
 /// Lance le shell sans EasyTab, avec l'intégration désactivée.

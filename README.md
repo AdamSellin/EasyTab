@@ -32,7 +32,7 @@ Quand la liste est fermée, Tab garde son comportement habituel (complétion du 
 
 Prérequis : [Rust](https://rustup.rs) stable. Shells pris en charge pour l'instant : zsh et bash
 (Linux, macOS), et Git Bash sous Windows dans Windows Terminal ou le terminal de VS Code. La fenêtre
-« Git Bash » par défaut (mintty) n'est pas encore prise en charge : le shell s'y lance sans EasyTab.
+« Git Bash » par défaut (mintty) n'est pas encore prise en charge : le shell s'y lance sans EasyTab, avec un message.
 Sous Windows, utilise le toolchain Rust MSVC (`rustup default stable-msvc`).
 
 ```sh

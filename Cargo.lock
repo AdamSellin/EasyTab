@@ -257,6 +257,7 @@ dependencies = [
  "portable-pty",
  "unicode-width",
  "vt100",
+ "windows-sys",
 ]
 
 [[package]]
