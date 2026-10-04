@@ -1,17 +1,23 @@
 # Intégration EasyTab pour bash, générée par `easytab init bash`.
+# `easytab install` la charge deux fois : en haut du ~/.bashrc, pour relancer le
+# shell sous EasyTab avant de lire le reste, et en bas, pour poser les hooks
+# après les thèmes de prompt.
 # Désactiver ponctuellement : EASYTAB_DISABLE=1 bash
 
 # 1. Hors d'EasyTab : relance ce shell sous le wrapper PTY.
 if [[ -z "$EASYTAB_TERM" && -z "$EASYTAB_DISABLE" && $- == *i* && -t 0 && -t 1 ]] \
     && command -v __EASYTAB_TERM_BIN__ >/dev/null 2>&1; then
+  if [[ -n "$MSYSTEM" ]]; then
+    # Git Bash : lancé par un programme Windows, bash doit être un shell de
+    # connexion pour que /etc/profile remette /usr/bin dans le PATH.
+    exec __EASYTAB_TERM_BIN__ --shell "${BASH:-bash}" -- -l
+  fi
   exec __EASYTAB_TERM_BIN__ --shell "${BASH:-bash}"
 fi
 
 # 2. Sous EasyTab : émet les marqueurs de prompt (OSC 133) et le dossier courant (OSC 7).
 # bash n'a pas de hook avant l'exécution : easytab-term détecte la touche Entrée.
-if [[ -n "$EASYTAB_TERM" && -z "$__easytab_loaded" ]]; then
-  __easytab_loaded=1
-
+if [[ -n "$EASYTAB_TERM" ]]; then
   __easytab_save_status() {
     __easytab_status=$?
   }
@@ -25,7 +31,10 @@ if [[ -n "$EASYTAB_TERM" && -z "$__easytab_loaded" ]]; then
 
   # Premier pour lire le vrai code de sortie, dernier pour passer après les thèmes.
   # Séparés par des retours à la ligne pour supporter un PROMPT_COMMAND finissant par « ; ».
-  __easytab_nl=$'\n'
-  PROMPT_COMMAND="__easytab_save_status${__easytab_nl}${PROMPT_COMMAND:+$PROMPT_COMMAND$__easytab_nl}__easytab_prompt"
-  unset __easytab_nl
+  # Ajoutés seulement s'ils manquent : ce script peut être chargé deux fois.
+  if [[ "$PROMPT_COMMAND" != *__easytab_prompt* ]]; then
+    __easytab_nl=$'\n'
+    PROMPT_COMMAND="__easytab_save_status${__easytab_nl}${PROMPT_COMMAND:+$PROMPT_COMMAND$__easytab_nl}__easytab_prompt"
+    unset __easytab_nl
+  fi
 fi
