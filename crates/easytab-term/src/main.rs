@@ -144,10 +144,10 @@ fn run(args: Args) -> Result<i32> {
                     }
                     None => {
                         // La commande part : la liste ne doit pas rester à l'écran.
-                        if data.contains(&b'\r') {
+                        if Key::submits(data) {
                             popup.erase(session.screen(), &mut frame);
+                            session.feed_input(b"\r");
                         }
-                        session.feed_input(data);
                     }
                 }
                 if !frame.is_empty() {
