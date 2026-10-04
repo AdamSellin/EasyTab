@@ -17,6 +17,7 @@ use windows::Win32::Foundation::{HWND, POINT};
 use windows::Win32::Graphics::Gdi::{
     GetMonitorInfoW, MonitorFromPoint, MONITORINFO, MONITOR_DEFAULTTONEAREST,
 };
+use windows::Win32::UI::HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI};
 use windows::Win32::UI::WindowsAndMessaging::{
     GetWindowLongPtrW, SetWindowLongPtrW, SetWindowPos, ShowWindow, GWL_EXSTYLE, HWND_TOPMOST,
     SWP_NOACTIVATE, SWP_SHOWWINDOW, SW_HIDE, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT,
@@ -148,7 +149,7 @@ pub fn run() -> anyhow::Result<()> {
                     send(Event::Ready);
                 } else if let Ok(measure) = serde_json::from_str::<Measure>(&message) {
                     state.measure = Some(measure);
-                    state.place(hwnd, window.scale_factor());
+                    state.place(hwnd);
                 }
             }
             WindowEvent::UserEvent(UserEvent::Caret(generation, caret))
@@ -157,7 +158,7 @@ pub fn run() -> anyhow::Result<()> {
                 match caret {
                     Some(caret) => {
                         state.failures = 0;
-                        state.read(caret, generation, hwnd, window.scale_factor());
+                        state.read(caret, generation, hwnd);
                     }
                     // Échec passager : on garde la position connue.
                     None if state.tracker.terminal().is_some() => {}
@@ -230,7 +231,7 @@ impl Default for State {
 impl State {
     /// Affiche la fenêtre à la position déduite du curseur, quand la taille
     /// de la page est connue.
-    fn place(&mut self, hwnd: isize, scale: f64) {
+    fn place(&mut self, hwnd: isize) {
         let (Some(view), Some(measure)) = (&self.view, self.measure) else {
             return;
         };
@@ -240,7 +241,9 @@ impl State {
         if self.hidden_away || (!self.shown && self.reads < 2) {
             return;
         }
-        let screen = work_area(caret.rect);
+        // L'échelle de l'écran du terminal, où la fenêtre va s'afficher, et
+        // non celle de l'écran où elle se trouve encore.
+        let (screen, scale) = work_area(caret.rect);
         let (x, y, width, height) = place(
             caret.rect,
             caret.cell_width,
@@ -265,7 +268,7 @@ impl State {
     }
 
     /// Nouvelle position du curseur.
-    fn read(&mut self, caret: Caret, generation: u64, hwnd: isize, scale: f64) {
+    fn read(&mut self, caret: Caret, generation: u64, hwnd: isize) {
         let Some(view) = &self.view else { return };
         // Le focus est passé dans un autre terminal sans que celui-ci ait
         // reçu de frappe : la liste n'a plus rien à faire là.
@@ -285,7 +288,7 @@ impl State {
         self.reads += 1;
         if changed || self.hidden_away || !self.shown {
             self.hidden_away = false;
-            self.place(hwnd, scale);
+            self.place(hwnd);
         }
     }
 
@@ -324,7 +327,7 @@ fn hide(hwnd: isize) {
 }
 
 /// Zone utilisable de l'écran qui contient le curseur (sans la barre des tâches).
-fn work_area(caret: Rect) -> Rect {
+fn work_area(caret: Rect) -> (Rect, f64) {
     // SAFETY: lecture des informations d'écran ; `info` vit pendant l'appel.
     unsafe {
         let monitor = MonitorFromPoint(
@@ -334,25 +337,32 @@ fn work_area(caret: Rect) -> Rect {
             },
             MONITOR_DEFAULTTONEAREST,
         );
+        let (mut dpi_x, mut dpi_y) = (0, 0);
+        let scale = match GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, &mut dpi_x, &mut dpi_y) {
+            Ok(()) if dpi_x > 0 => dpi_x as f64 / 96.0,
+            _ => 1.0,
+        };
         let mut info = MONITORINFO {
             cbSize: std::mem::size_of::<MONITORINFO>() as u32,
             ..Default::default()
         };
         if GetMonitorInfoW(monitor, &mut info).as_bool() {
             let work = info.rcWork;
-            return Rect {
+            let rect = Rect {
                 left: work.left,
                 top: work.top,
                 right: work.right,
                 bottom: work.bottom,
             };
+            return (rect, scale);
         }
-    }
-    Rect {
-        left: i32::MIN / 2,
-        top: i32::MIN / 2,
-        right: i32::MAX / 2,
-        bottom: i32::MAX / 2,
+        let everywhere = Rect {
+            left: i32::MIN / 2,
+            top: i32::MIN / 2,
+            right: i32::MAX / 2,
+            bottom: i32::MAX / 2,
+        };
+        (everywhere, scale)
     }
 }
 
