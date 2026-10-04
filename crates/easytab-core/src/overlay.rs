@@ -33,6 +33,10 @@ pub struct View {
     pub description: Option<String>,
     /// Largeur du mot tapé, en colonnes : les noms s'alignent sous lui.
     pub word_width: usize,
+    /// Position du curseur dans le terminal (ligne, colonne), pour déduire
+    /// sa position à l'écran entre deux lectures.
+    pub cursor_row: usize,
+    pub cursor_col: usize,
     /// Nombre total de suggestions et position de la première ligne visible.
     pub total: usize,
     pub first: usize,

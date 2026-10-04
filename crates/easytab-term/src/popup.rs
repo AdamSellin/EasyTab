@@ -281,7 +281,7 @@ impl Popup {
     }
 
     /// Contenu de la fenêtre flottante, ou `None` s'il n'y a rien à afficher.
-    pub fn view(&mut self) -> Option<View> {
+    pub fn view(&mut self, screen: &vt100::Screen) -> Option<View> {
         let Some(completion) = &self.completion else {
             self.in_overlay = false;
             return None;
@@ -308,6 +308,8 @@ impl Popup {
             selected: self.selected - self.scroll,
             description: items.get(self.selected).and_then(|s| s.description.clone()),
             word_width: completion.replace.width(),
+            cursor_row: screen.cursor_position().0 as usize,
+            cursor_col: screen.cursor_position().1 as usize,
             total: items.len(),
             first: self.scroll,
         })

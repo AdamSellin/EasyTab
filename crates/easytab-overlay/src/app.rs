@@ -23,12 +23,14 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 use wry::{WebContext, WebViewBuilder};
 
-use crate::caret::{self, Caret, Locator};
-use crate::placement::{place, Measure, Rect};
+use crate::caret::{self, Locator};
+use crate::placement::{place, Caret, Measure, Rect, Tracker};
 
-/// Fréquence à laquelle on vérifie que le terminal est toujours au premier
-/// plan et n'a pas bougé.
+/// Fréquence à laquelle on relit la position du curseur et vérifie que le
+/// terminal est toujours au premier plan.
 const WATCH: Duration = Duration::from_millis(150);
+/// Délai de la relecture qui suit chaque frappe.
+const SETTLE: Duration = Duration::from_millis(50);
 
 enum UserEvent {
     Request(Request),
@@ -116,23 +118,26 @@ pub fn run() -> anyhow::Result<()> {
         let _ = &window;
         match event {
             WindowEvent::NewEvents(StartCause::ResumeTimeReached { .. }) => {
-                state.watch(hwnd, &locate);
+                if Instant::now() >= state.next_check {
+                    state.watch(hwnd, &locate);
+                }
             }
             WindowEvent::UserEvent(UserEvent::Request(Request::Show(view))) => {
                 let json = serde_json::to_string(&view).unwrap_or_default();
                 let _ = webview.evaluate_script(&format!("render({json})"));
                 state.view = Some(view);
-                // Position et taille sont recalculées pour chaque liste : la
-                // fenêtre ne s'affiche qu'avec les deux à jour.
-                state.caret = None;
+                // La taille de la page arrive avec le nouveau contenu.
                 state.measure = None;
                 state.generation += 1;
                 let _ = locate.send(state.generation);
+                // Relecture peu après : le terminal met à jour son curseur
+                // avec un temps de retard.
+                state.next_check = Instant::now() + SETTLE;
             }
             WindowEvent::UserEvent(UserEvent::Request(Request::Hide)) => {
                 state.view = None;
                 state.generation += 1;
-                hide(hwnd);
+                state.hide(hwnd);
             }
             WindowEvent::UserEvent(UserEvent::Page(message)) => {
                 if message == "\"ready\"" {
@@ -143,20 +148,27 @@ pub fn run() -> anyhow::Result<()> {
                 }
             }
             WindowEvent::UserEvent(UserEvent::Caret(generation, caret)) => {
-                if generation != state.generation || state.view.is_none() {
+                let Some(view) = &state.view else { return };
+                if generation != state.generation {
                     return;
                 }
                 match caret {
                     Some(caret) => {
-                        state.caret = Some(caret);
-                        state.hidden_away = false;
-                        state.place(hwnd, window.scale_factor());
+                        state.failures = 0;
+                        let (row, col) = (view.cursor_row, view.cursor_col);
+                        if state.tracker.read(caret, row, col) || !state.shown {
+                            state.hidden_away = false;
+                            state.place(hwnd, window.scale_factor());
+                        }
                     }
+                    // Échec passager : on garde la position connue.
+                    None if state.tracker.window().is_some() => {}
+                    None if state.failures < 2 => state.failures += 1,
                     None => {
                         // Le terminal dessinera la liste lui-même.
                         state.view = None;
-                        state.caret = None;
-                        hide(hwnd);
+                        state.failures = 0;
+                        state.hide(hwnd);
                         send(Event::Unavailable);
                     }
                 }
@@ -168,31 +180,54 @@ pub fn run() -> anyhow::Result<()> {
             _ => {}
         }
         *control_flow = if state.view.is_some() {
-            ControlFlow::WaitUntil(Instant::now() + WATCH)
+            ControlFlow::WaitUntil(state.next_check)
         } else {
             ControlFlow::Wait
         };
     });
 }
 
-#[derive(Default)]
 struct State {
     /// Liste demandée par le terminal (`None` : cachée).
     view: Option<View>,
     /// Numéro de la dernière demande : les réponses plus anciennes sont ignorées.
     generation: u64,
-    caret: Option<Caret>,
+    tracker: Tracker,
     measure: Option<Measure>,
+    /// La fenêtre est à l'écran.
+    shown: bool,
     /// Le terminal n'est plus au premier plan : la fenêtre est cachée en
     /// attendant qu'il revienne.
     hidden_away: bool,
+    /// Lectures du curseur ratées avant d'avoir une position.
+    failures: u32,
+    /// Prochaine relecture du curseur.
+    next_check: Instant,
+}
+
+impl Default for State {
+    fn default() -> Self {
+        Self {
+            view: None,
+            generation: 0,
+            tracker: Tracker::default(),
+            measure: None,
+            shown: false,
+            hidden_away: false,
+            failures: 0,
+            next_check: Instant::now(),
+        }
+    }
 }
 
 impl State {
-    /// Affiche la fenêtre quand le curseur et la taille de la page sont connus.
-    fn place(&self, hwnd: isize, scale: f64) {
-        let (Some(view), Some(caret), Some(measure)) = (&self.view, self.caret, self.measure)
-        else {
+    /// Affiche la fenêtre à la position déduite du curseur, quand la taille
+    /// de la page est connue.
+    fn place(&mut self, hwnd: isize, scale: f64) {
+        let (Some(view), Some(measure)) = (&self.view, self.measure) else {
+            return;
+        };
+        let Some(caret) = self.tracker.caret(view.cursor_row, view.cursor_col) else {
             return;
         };
         if self.hidden_away {
@@ -219,27 +254,33 @@ impl State {
                 SWP_NOACTIVATE | SWP_SHOWWINDOW,
             );
         }
+        self.shown = true;
     }
 
-    /// Cache la fenêtre quand on quitte le terminal, la replace quand il
-    /// revient ou bouge.
+    fn hide(&mut self, hwnd: isize) {
+        self.shown = false;
+        hide(hwnd);
+    }
+
+    /// Cache la fenêtre quand on quitte le terminal ; sinon relit la position
+    /// du curseur, pour suivre le terminal s'il bouge et corriger une lecture
+    /// trop ancienne.
     fn watch(&mut self, hwnd: isize, locate: &mpsc::Sender<u64>) {
-        let (Some(_), Some(caret)) = (&self.view, self.caret) else {
+        self.next_check = Instant::now() + WATCH;
+        if self.view.is_none() {
             return;
-        };
-        let foreground = caret::foreground();
-        if foreground != caret.window {
-            if !self.hidden_away {
-                self.hidden_away = true;
-                hide(hwnd);
+        }
+        if let Some(window) = self.tracker.window() {
+            if caret::foreground() != window {
+                if !self.hidden_away {
+                    self.hidden_away = true;
+                    self.hide(hwnd);
+                }
+                return;
             }
-            return;
         }
-        if self.hidden_away || caret::window_rect(caret.window) != Some(caret.window_rect) {
-            self.hidden_away = false;
-            self.generation += 1;
-            let _ = locate.send(self.generation);
-        }
+        self.generation += 1;
+        let _ = locate.send(self.generation);
     }
 }
 
