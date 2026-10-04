@@ -79,6 +79,23 @@ impl Key {
     }
 }
 
+/// Retire de `data` les signaux de focus du terminal (`ESC[I` : le terminal
+/// prend le focus, `ESC[O` : il le perd) et renvoie le dernier reçu.
+pub fn take_focus_events(data: &mut Vec<u8>) -> Option<bool> {
+    let mut focused = None;
+    let mut i = 0;
+    while i + 3 <= data.len() {
+        match &data[i..i + 3] {
+            b"\x1b[I" | b"\x1b[O" => {
+                focused = Some(data[i + 2] == b'I');
+                data.drain(i..i + 3);
+            }
+            _ => i += 1,
+        }
+    }
+    focused
+}
+
 /// Réponse du terminal à `ESC[6n` (`ESC[ligne;colonneR`, à partir de 1) :
 /// position et emplacement de la séquence dans `data`.
 pub fn cursor_report(data: &[u8]) -> Option<(u16, u16, std::ops::Range<usize>)> {
@@ -651,6 +668,16 @@ mod tests {
         assert_eq!(Key::parse(b"\x1b"), Some(Key::Dismiss));
         assert_eq!(Key::parse(b"\r"), Some(Key::Enter));
         assert_eq!(Key::parse(b"a"), None);
+    }
+
+    #[test]
+    fn takes_focus_events() {
+        let mut data = b"a\x1b[Ob\x1b[I".to_vec();
+        assert_eq!(take_focus_events(&mut data), Some(true));
+        assert_eq!(data, b"ab");
+        let mut data = b"\x1b[A".to_vec();
+        assert_eq!(take_focus_events(&mut data), None);
+        assert_eq!(data, b"\x1b[A");
     }
 
     #[test]

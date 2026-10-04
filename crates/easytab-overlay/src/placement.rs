@@ -9,20 +9,21 @@ pub struct Rect {
     pub bottom: i32,
 }
 
-/// Curseur lu à l'écran : sa case, la largeur d'une case et la fenêtre du
-/// terminal.
+/// Curseur lu à l'écran : sa case, la largeur d'une case, la fenêtre du
+/// terminal et l'élément qui a le focus (un onglet ou un terminal de VS Code).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Caret {
     pub rect: Rect,
     pub cell_width: f64,
     pub window: isize,
+    pub element: u64,
 }
 
 impl Caret {
     /// Le même curseur, déplacé de `rows` lignes et `cols` colonnes.
     fn shifted(self, rows: isize, cols: isize) -> Self {
         let dx = (cols as f64 * self.cell_width).round() as i32;
-        let dy = rows as i32 * (self.rect.bottom - self.rect.top);
+        let dy = rows as i32 * self.height();
         Self {
             rect: Rect {
                 left: self.rect.left + dx,
@@ -33,19 +34,33 @@ impl Caret {
             ..self
         }
     }
+
+    fn height(&self) -> i32 {
+        self.rect.bottom - self.rect.top
+    }
+
+    /// Même terminal (fenêtre et élément).
+    pub fn same_terminal(&self, other: &Caret) -> bool {
+        self.window == other.window && self.element == other.element
+    }
 }
 
+/// Lectures en retard sur la même ligne tolérées avant d'y croire.
+const BEHIND_LIMIT: u32 = 3;
+
 /// Suit la position du curseur à l'écran. Les terminaux exposent leur curseur
-/// avec un temps de retard (VS Code surtout) : une lecture peut dater d'avant
-/// la dernière frappe, voire d'un passage en colonne 0 pendant que le shell
-/// redessine la ligne. On garde donc une position de référence, avec la ligne
-/// et la colonne du curseur dans le terminal à ce moment-là, et on en déduit
-/// la position actuelle. Une lecture qui ne colle pas avec cette déduction
-/// n'est retenue que si la suivante donne la même chose.
+/// avec un temps de retard (VS Code surtout), et le shell repasse souvent par
+/// le début de la ligne pour la redessiner (PowerShell à chaque frappe) : une
+/// lecture peut donc montrer le curseur plus à gauche qu'il n'est. On garde
+/// une position de référence, avec la ligne et la colonne du curseur dans le
+/// terminal à ce moment-là, et on en déduit la position actuelle. Une lecture
+/// plus à droite ou sur une autre ligne est retenue tout de suite ; une
+/// lecture plus à gauche sur la même ligne seulement si elle se répète.
 #[derive(Debug, Default)]
 pub struct Tracker {
     anchor: Option<(Caret, usize, usize)>,
-    candidate: Option<Caret>,
+    /// Lectures plus à gauche que prévu à la suite.
+    behind: u32,
     /// Largeur d'une case mesurée entre deux lectures sur la même ligne
     /// (plus juste que l'estimation d'une seule lecture).
     cell_width: Option<f64>,
@@ -53,39 +68,39 @@ pub struct Tracker {
 
 impl Tracker {
     /// Nouvelle lecture alors que le curseur du terminal est en (`row`, `col`).
-    /// Renvoie vrai si la position de référence a changé.
+    /// Renvoie vrai si la position déduite a changé.
     pub fn read(&mut self, caret: Caret, row: usize, col: usize) -> bool {
-        let expected = self.caret(row, col);
-        let agrees = |other: Option<Caret>, slack: f64| {
-            other.is_some_and(|other| {
-                other.window == caret.window
-                    && ((other.rect.left - caret.rect.left).abs() as f64) <= slack
-                    && (other.rect.top - caret.rect.top).abs()
-                        <= (caret.rect.bottom - caret.rect.top) / 2
-            })
-        };
-        if agrees(expected, caret.cell_width * 1.5) || agrees(self.candidate, 2.0) {
-            let changed = expected.map(|e| e.rect) != Some(caret.rect);
-            if let Some((previous, previous_row, previous_col)) = self.anchor {
-                let columns = col as f64 - previous_col as f64;
-                let height = (caret.rect.bottom - caret.rect.top) as f64;
-                let width = (caret.rect.left - previous.rect.left) as f64 / columns;
-                if previous.window == caret.window
-                    && previous_row == row
-                    && columns.abs() >= 2.0
-                    && width >= height * 0.3
-                    && width <= height
-                {
-                    self.cell_width = Some(width);
-                }
-            }
+        let Some(expected) = self.caret(row, col).filter(|e| e.same_terminal(&caret)) else {
+            self.cell_width = None;
+            self.behind = 0;
             self.anchor = Some((caret, row, col));
-            self.candidate = None;
-            changed
-        } else {
-            self.candidate = Some(caret);
-            false
+            return true;
+        };
+        let dx = caret.rect.left - expected.rect.left;
+        let same_row = (caret.rect.top - expected.rect.top).abs() <= caret.height() / 2;
+        let close = same_row && (dx.abs() as f64) <= expected.cell_width * 1.5;
+        if same_row && !close && dx < 0 {
+            self.behind += 1;
+            if self.behind < BEHIND_LIMIT {
+                return false;
+            }
         }
+        self.behind = 0;
+        if let Some((previous, previous_row, previous_col)) = self.anchor {
+            let columns = col as f64 - previous_col as f64;
+            let width = (caret.rect.left - previous.rect.left) as f64 / columns;
+            let height = caret.height() as f64;
+            if close
+                && previous_row == row
+                && columns.abs() >= 2.0
+                && width >= height * 0.3
+                && width <= height
+            {
+                self.cell_width = Some(width);
+            }
+        }
+        self.anchor = Some((caret, row, col));
+        expected.rect != caret.rect
     }
 
     /// Position du curseur quand il est en (`row`, `col`) dans le terminal.
@@ -100,8 +115,9 @@ impl Tracker {
         ))
     }
 
-    pub fn window(&self) -> Option<isize> {
-        self.anchor.map(|(caret, _, _)| caret.window)
+    /// Le terminal suivi.
+    pub fn terminal(&self) -> Option<Caret> {
+        self.anchor.map(|(caret, _, _)| caret)
     }
 }
 
@@ -190,41 +206,60 @@ mod tests {
             rect: caret(left, top),
             cell_width: 9.0,
             window: 7,
+            element: 1,
         }
     }
 
     #[test]
-    fn needs_two_matching_readings_to_start() {
+    fn follows_the_terminal_cursor() {
         let mut tracker = Tracker::default();
-        assert!(!tracker.read(read(100, 40), 2, 10));
-        assert!(tracker.caret(2, 10).is_none());
         assert!(tracker.read(read(100, 40), 2, 10));
-        assert_eq!(tracker.caret(2, 10).unwrap().rect.left, 100);
+        // Trois lettres tapées : la position est déduite tout de suite.
+        assert_eq!(tracker.caret(2, 13).unwrap().rect.left, 127);
+        assert_eq!(tracker.caret(3, 0).unwrap().rect.top, 60);
     }
 
     #[test]
-    fn follows_the_terminal_cursor_and_ignores_stale_readings() {
+    fn ignores_readings_left_behind_by_a_redraw() {
         let mut tracker = Tracker::default();
         tracker.read(read(100, 40), 2, 10);
-        tracker.read(read(100, 40), 2, 10);
-        // Trois lettres tapées : la position est déduite tout de suite.
-        assert_eq!(tracker.caret(2, 13).unwrap().rect.left, 127);
         // Lecture en colonne 0 pendant que le shell redessine : ignorée.
-        tracker.read(read(10, 40), 2, 13);
+        assert!(!tracker.read(read(10, 40), 2, 13));
         assert_eq!(tracker.caret(2, 13).unwrap().rect.left, 127);
         // Lecture à jour : retenue.
-        tracker.read(read(127, 40), 2, 13);
-        assert_eq!(tracker.caret(3, 0).unwrap().rect.top, 60);
-        // Le terminal a vraiment bougé : deux lectures identiques suffisent.
-        tracker.read(read(400, 300), 2, 13);
-        tracker.read(read(400, 300), 2, 13);
-        assert_eq!(tracker.caret(2, 13).unwrap().rect.left, 400);
+        assert!(!tracker.read(read(127, 40), 2, 13));
+        // La même lecture à gauche plusieurs fois : le terminal a bougé.
+        for _ in 0..BEHIND_LIMIT {
+            tracker.read(read(10, 40), 2, 13);
+        }
+        assert_eq!(tracker.caret(2, 13).unwrap().rect.left, 10);
+    }
+
+    #[test]
+    fn corrects_a_first_reading_taken_too_early() {
+        let mut tracker = Tracker::default();
+        // Première lecture en colonne 0 alors que le curseur est en colonne 2.
+        tracker.read(read(10, 40), 2, 2);
+        // La suivante, plus à droite, est retenue tout de suite.
+        assert!(tracker.read(read(400, 40), 2, 2));
+        assert_eq!(tracker.caret(2, 2).unwrap().rect.left, 400);
+    }
+
+    #[test]
+    fn starts_over_in_another_terminal() {
+        let mut tracker = Tracker::default();
+        tracker.read(read(100, 40), 2, 10);
+        let other = Caret {
+            element: 2,
+            ..read(10, 40)
+        };
+        assert!(tracker.read(other, 2, 10));
+        assert_eq!(tracker.terminal().unwrap().element, 2);
     }
 
     #[test]
     fn measures_the_cell_width_between_readings() {
         let mut tracker = Tracker::default();
-        tracker.read(read(100, 40), 2, 10);
         tracker.read(read(100, 40), 2, 10);
         // Les cases font en réalité 8 px, pas les 9 px estimés.
         tracker.read(read(124, 40), 2, 13);

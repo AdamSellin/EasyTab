@@ -37,6 +37,12 @@ struct Shared {
     completer: Completer,
     /// Fenêtre flottante, si elle est disponible.
     overlay: Option<Overlay>,
+    /// Le terminal a le focus (signaux `ESC[I` / `ESC[O`) : la liste se cache
+    /// quand on passe à un autre onglet ou un autre terminal.
+    focused: bool,
+    /// Le programme lancé dans le shell a demandé lui-même les signaux de
+    /// focus (vim…) : on les lui transmet.
+    app_wants_focus: bool,
     /// Dossier utilisé tant que le shell n'a pas annoncé le sien (`OSC 7`).
     fallback_cwd: PathBuf,
 }
@@ -74,6 +80,9 @@ impl Shared {
     /// Affiche la liste dans la fenêtre flottante si possible, sinon dans le
     /// terminal.
     fn show(&mut self, frame: &mut Vec<u8>) {
+        if !self.focused {
+            return self.hide(frame);
+        }
         match self.overlay.as_mut().filter(|overlay| overlay.usable()) {
             Some(overlay) => overlay.show(self.popup.view(self.session.screen())),
             None => self.popup.draw(self.session.screen(), frame),
@@ -152,11 +161,18 @@ fn run(args: Args) -> Result<i32> {
             .with_generators(generators)
             .with_usage(load_usage()),
         overlay: Overlay::spawn(unavailable),
+        focused: true,
+        app_wants_focus: false,
         fallback_cwd,
     }));
     let mut log = open_log();
 
     let raw_mode = RawMode::enable()?;
+    {
+        // Demande au terminal de signaler quand il prend ou perd le focus.
+        let mut stdout = io::stdout().lock();
+        let _ = stdout.write_all(FOCUS_ON).and_then(|_| stdout.flush());
+    }
     // Le shell démarre là où se trouve le curseur, pas en haut de l'écran : la
     // copie de l'écran doit le savoir, sinon la liste serait dessinée au mauvais
     // endroit. On demande la position au terminal (`ESC[6n`) ; le fil clavier
@@ -193,8 +209,30 @@ fn run(args: Args) -> Result<i32> {
                     continue;
                 }
             }
-            let data = &data[..];
             let mut frame = Vec::new();
+            if let Some(focused) = popup::take_focus_events(&mut data) {
+                let mut shared = input_shared.lock().unwrap();
+                shared.focused = focused;
+                if focused {
+                    shared.refresh(&mut frame);
+                } else {
+                    shared.hide(&mut frame);
+                }
+                shared.flush_overlay();
+                if !frame.is_empty() {
+                    let mut stdout = io::stdout().lock();
+                    let _ = stdout.write_all(&frame).and_then(|_| stdout.flush());
+                    frame.clear();
+                }
+                if shared.app_wants_focus {
+                    let signal: &[u8] = if focused { b"\x1b[I" } else { b"\x1b[O" };
+                    let _ = writer.write_all(signal).and_then(|_| writer.flush());
+                }
+                if data.is_empty() {
+                    continue;
+                }
+            }
+            let data = &data[..];
             let mut to_shell = data.to_vec();
             {
                 let mut shared = input_shared.lock().unwrap();
@@ -328,6 +366,14 @@ fn run(args: Args) -> Result<i32> {
             shared.hide(&mut frame);
             frame.extend_from_slice(&buf[..n]);
             shared.session.feed_output(&buf[..n]);
+            let output = &buf[..n];
+            if contains(output, FOCUS_ON) {
+                shared.app_wants_focus = true;
+            } else if contains(output, FOCUS_OFF) {
+                shared.app_wants_focus = false;
+                // On garde les signaux pour nous.
+                frame.extend_from_slice(FOCUS_ON);
+            }
             shared.refresh(&mut frame);
             shared.flush_overlay();
 
@@ -438,6 +484,15 @@ fn open_log() -> Option<File> {
     OpenOptions::new().create(true).append(true).open(path).ok()
 }
 
+const FOCUS_ON: &[u8] = b"\x1b[?1004h";
+const FOCUS_OFF: &[u8] = b"\x1b[?1004l";
+
+fn contains(haystack: &[u8], needle: &[u8]) -> bool {
+    haystack
+        .windows(needle.len())
+        .any(|window| window == needle)
+}
+
 /// Remet le terminal en mode normal même en cas d'erreur.
 struct RawMode {
     #[cfg(windows)]
@@ -456,6 +511,8 @@ impl RawMode {
 
 impl Drop for RawMode {
     fn drop(&mut self) {
+        let mut stdout = io::stdout().lock();
+        let _ = stdout.write_all(FOCUS_OFF).and_then(|_| stdout.flush());
         #[cfg(windows)]
         vt::restore(&self.console);
         let _ = terminal::disable_raw_mode();
