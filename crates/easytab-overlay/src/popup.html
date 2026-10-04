@@ -135,12 +135,11 @@
     document.getElementById("frame").innerHTML =
       `<div class="box"><div class="rows">${rows.join("")}</div>${footer}</div>`;
     const frame = document.getElementById("frame").getBoundingClientRect();
-    const label = document.querySelector(".label");
     const box = document.querySelector(".box").getBoundingClientRect();
     const size = {
       width: Math.ceil(frame.width),
       height: Math.ceil(frame.height),
-      label_x: label ? label.getBoundingClientRect().left : 0,
+      box_left: box.left,
       box_top: box.top,
       box_bottom: box.bottom,
     };
