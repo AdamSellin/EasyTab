@@ -129,6 +129,10 @@ pub fn run() -> anyhow::Result<()> {
                 // La taille de la page arrive avec le nouveau contenu.
                 state.measure = None;
                 state.generation += 1;
+                state.show_generation = state.generation;
+                if !state.shown {
+                    state.reads = 0;
+                }
                 let _ = locate.send(state.generation);
                 // Relecture peu après : le terminal met à jour son curseur
                 // avec un temps de retard.
@@ -147,22 +151,16 @@ pub fn run() -> anyhow::Result<()> {
                     state.place(hwnd, window.scale_factor());
                 }
             }
-            WindowEvent::UserEvent(UserEvent::Caret(generation, caret)) => {
-                let Some(view) = &state.view else { return };
-                if generation != state.generation {
-                    return;
-                }
+            WindowEvent::UserEvent(UserEvent::Caret(generation, caret))
+                if generation == state.generation && state.view.is_some() =>
+            {
                 match caret {
                     Some(caret) => {
                         state.failures = 0;
-                        let (row, col) = (view.cursor_row, view.cursor_col);
-                        if state.tracker.read(caret, row, col) || !state.shown {
-                            state.hidden_away = false;
-                            state.place(hwnd, window.scale_factor());
-                        }
+                        state.read(caret, generation, hwnd, window.scale_factor());
                     }
                     // Échec passager : on garde la position connue.
-                    None if state.tracker.window().is_some() => {}
+                    None if state.tracker.terminal().is_some() => {}
                     None if state.failures < 2 => state.failures += 1,
                     None => {
                         // Le terminal dessinera la liste lui-même.
@@ -192,11 +190,18 @@ struct State {
     view: Option<View>,
     /// Numéro de la dernière demande : les réponses plus anciennes sont ignorées.
     generation: u64,
+    /// Numéro de la lecture demandée par la dernière liste du terminal (la
+    /// frappe vient forcément de lui).
+    show_generation: u64,
+    /// Lectures depuis la première apparition : on en attend deux, la
+    /// première est souvent en retard.
+    reads: u32,
     tracker: Tracker,
     measure: Option<Measure>,
     /// La fenêtre est à l'écran.
     shown: bool,
-    /// Le terminal n'est plus au premier plan : la fenêtre est cachée en
+    /// Le terminal n'est plus au premier plan ou n'a plus le focus (autre
+    /// onglet, autre terminal de VS Code) : la fenêtre est cachée en
     /// attendant qu'il revienne.
     hidden_away: bool,
     /// Lectures du curseur ratées avant d'avoir une position.
@@ -210,6 +215,8 @@ impl Default for State {
         Self {
             view: None,
             generation: 0,
+            show_generation: 0,
+            reads: 0,
             tracker: Tracker::default(),
             measure: None,
             shown: false,
@@ -230,7 +237,7 @@ impl State {
         let Some(caret) = self.tracker.caret(view.cursor_row, view.cursor_col) else {
             return;
         };
-        if self.hidden_away {
+        if self.hidden_away || (!self.shown && self.reads < 2) {
             return;
         }
         let screen = work_area(caret.rect);
@@ -257,6 +264,31 @@ impl State {
         self.shown = true;
     }
 
+    /// Nouvelle position du curseur.
+    fn read(&mut self, caret: Caret, generation: u64, hwnd: isize, scale: f64) {
+        let Some(view) = &self.view else { return };
+        // Le focus est passé dans un autre terminal sans que celui-ci ait
+        // reçu de frappe : la liste n'a plus rien à faire là.
+        let elsewhere = generation != self.show_generation
+            && self
+                .tracker
+                .terminal()
+                .is_some_and(|terminal| !terminal.same_terminal(&caret));
+        if elsewhere {
+            if !self.hidden_away {
+                self.hidden_away = true;
+                self.hide(hwnd);
+            }
+            return;
+        }
+        let changed = self.tracker.read(caret, view.cursor_row, view.cursor_col);
+        self.reads += 1;
+        if changed || self.hidden_away || !self.shown {
+            self.hidden_away = false;
+            self.place(hwnd, scale);
+        }
+    }
+
     fn hide(&mut self, hwnd: isize) {
         self.shown = false;
         hide(hwnd);
@@ -270,8 +302,8 @@ impl State {
         if self.view.is_none() {
             return;
         }
-        if let Some(window) = self.tracker.window() {
-            if caret::foreground() != window {
+        if let Some(terminal) = self.tracker.terminal() {
+            if caret::foreground() != terminal.window {
                 if !self.hidden_away {
                     self.hidden_away = true;
                     self.hide(hwnd);

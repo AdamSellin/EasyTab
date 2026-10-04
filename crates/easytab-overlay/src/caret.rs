@@ -9,6 +9,8 @@
 //! 3. l'élément qui a le focus, s'il a la taille d'une case : VS Code place
 //!    sa zone de saisie, invisible, exactement sur le curseur.
 
+use std::hash::{Hash, Hasher};
+
 use windows::core::BOOL;
 use windows::Win32::Foundation::{HWND, POINT, RECT};
 use windows::Win32::Graphics::Gdi::ClientToScreen;
@@ -17,9 +19,9 @@ use windows::Win32::System::Com::{
 };
 use windows::Win32::System::Ole::{SafeArrayDestroy, SafeArrayGetElement, SafeArrayGetUBound};
 use windows::Win32::UI::Accessibility::{
-    CUIAutomation, IUIAutomation, IUIAutomationTextPattern, IUIAutomationTextPattern2,
-    IUIAutomationTextRange, TextPatternRangeEndpoint_Start, TextUnit_Character, UIA_TextPattern2Id,
-    UIA_TextPatternId,
+    CUIAutomation, IUIAutomation, IUIAutomationElement, IUIAutomationTextPattern,
+    IUIAutomationTextPattern2, IUIAutomationTextRange, TextPatternRangeEndpoint_Start,
+    TextUnit_Character, UIA_TextPattern2Id, UIA_TextPatternId,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     GetForegroundWindow, GetGUIThreadInfo, GetWindowThreadProcessId, GUITHREADINFO,
@@ -55,13 +57,25 @@ impl Locator {
             if window.is_invalid() {
                 return None;
             }
-            let (rect, cell_width) = system_caret(window)
-                .or_else(|| self.automation.as_ref().and_then(|a| uia_caret(a)))?;
-            Some(Caret {
+            let focused = self
+                .automation
+                .as_ref()
+                .and_then(|automation| automation.GetFocusedElement().ok());
+            let (rect, cell_width, source) = match system_caret(window) {
+                Some((rect, cell)) => (rect, cell, "système"),
+                None => {
+                    let (rect, cell) = uia_caret(focused.as_ref()?)?;
+                    (rect, cell, "uia")
+                }
+            };
+            let caret = Caret {
                 rect,
                 cell_width,
                 window: window.0 as isize,
-            })
+                element: focused.as_ref().map_or(0, |element| element_id(element)),
+            };
+            log(source, &caret);
+            Some(caret)
         }
     }
 }
@@ -110,8 +124,53 @@ unsafe fn system_caret(window: HWND) -> Option<(Rect, f64)> {
     ))
 }
 
-unsafe fn uia_caret(automation: &IUIAutomation) -> Option<(Rect, f64)> {
-    let element = automation.GetFocusedElement().ok()?;
+/// Identifiant de l'élément qui a le focus : chaque onglet de Windows Terminal
+/// et chaque terminal de VS Code a le sien.
+unsafe fn element_id(element: &IUIAutomationElement) -> u64 {
+    let Ok(array) = element.GetRuntimeId() else {
+        return 0;
+    };
+    if array.is_null() {
+        return 0;
+    }
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    let upper = SafeArrayGetUBound(array, 1).unwrap_or(-1);
+    for index in 0..=upper {
+        let mut value = 0i32;
+        if SafeArrayGetElement(array, &index, &mut value as *mut i32 as *mut _).is_ok() {
+            value.hash(&mut hasher);
+        }
+    }
+    let _ = SafeArrayDestroy(array);
+    hasher.finish()
+}
+
+/// Journal des lectures (`EASYTAB_OVERLAY_LOG=fichier`), pour comprendre un
+/// mauvais placement.
+fn log(source: &str, caret: &Caret) {
+    use std::io::Write;
+    use std::sync::OnceLock;
+    static FILE: OnceLock<Option<std::sync::Mutex<std::fs::File>>> = OnceLock::new();
+    let file = FILE.get_or_init(|| {
+        let path = std::env::var_os("EASYTAB_OVERLAY_LOG")?;
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .ok()?;
+        Some(std::sync::Mutex::new(file))
+    });
+    if let Some(file) = file {
+        if let Ok(mut file) = file.lock() {
+            let time = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_millis());
+            let _ = writeln!(file, "{time} {source} {caret:?}");
+        }
+    }
+}
+
+unsafe fn uia_caret(element: &IUIAutomationElement) -> Option<(Rect, f64)> {
     let range = element
         .GetCurrentPatternAs::<IUIAutomationTextPattern2>(UIA_TextPattern2Id)
         .ok()
