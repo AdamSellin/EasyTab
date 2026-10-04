@@ -126,16 +126,16 @@ impl Tracker {
 pub struct Measure {
     pub width: f64,
     pub height: f64,
-    /// Début des noms dans la fenêtre.
-    pub label_x: f64,
-    /// Haut et bas du cadre (la fenêtre a une marge pour l'ombre).
+    /// Bords du cadre (la fenêtre a une marge pour l'ombre).
+    pub box_left: f64,
     pub box_top: f64,
     pub box_bottom: f64,
 }
 
-/// Coin haut gauche et taille de la fenêtre, en pixels de l'écran : sous le
-/// curseur, les noms alignés sous le mot tapé, au-dessus s'il n'y a pas la
-/// place en dessous, sans sortir de l'écran.
+/// Coin haut gauche et taille de la fenêtre, en pixels de l'écran : comme
+/// Fig, le bord gauche du cadre au début du mot tapé (au curseur après une
+/// espace), sous le curseur ou au-dessus s'il n'y a pas la place en dessous,
+/// sans sortir de l'écran.
 pub fn place(
     caret: Rect,
     cell_width: f64,
@@ -148,7 +148,7 @@ pub fn place(
     let width = (measure.width * scale).ceil() as i32;
     let height = (measure.height * scale).ceil() as i32;
     let word_left = caret.left as f64 - word_width as f64 * cell_width;
-    let mut x = (word_left - measure.label_x * scale).round() as i32;
+    let mut x = (word_left - measure.box_left * scale).round() as i32;
     let mut y = (caret.bottom as f64 + GAP * scale - measure.box_top * scale).round() as i32;
     if y + (measure.box_bottom * scale) as i32 > screen.bottom {
         y = (caret.top as f64 - GAP * scale - measure.box_bottom * scale).round() as i32;
@@ -171,7 +171,7 @@ mod tests {
     const MEASURE: Measure = Measure {
         width: 300.0,
         height: 200.0,
-        label_x: 40.0,
+        box_left: 8.0,
         box_top: 6.0,
         box_bottom: 182.0,
     };
@@ -186,10 +186,10 @@ mod tests {
     }
 
     #[test]
-    fn places_names_under_the_typed_word() {
-        // Mot de 2 colonnes de 9 px : les noms commencent 18 px avant le curseur.
+    fn starts_the_box_at_the_typed_word() {
+        // Mot de 2 colonnes de 9 px : le cadre commence 18 px avant le curseur.
         let (x, y, width, height) = place(caret(500, 300), 9.0, 2, MEASURE, 1.0, SCREEN);
-        assert_eq!(x + 40, 500 - 18);
+        assert_eq!(x + 8, 500 - 18);
         assert_eq!(y + 6, 320 + 2);
         assert_eq!((width, height), (300, 200));
     }
@@ -270,7 +270,7 @@ mod tests {
     #[test]
     fn scales_css_pixels() {
         let (x, _, width, height) = place(caret(1000, 300), 18.0, 1, MEASURE, 2.0, SCREEN);
-        assert_eq!(x + 80, 1000 - 18);
+        assert_eq!(x + 16, 1000 - 18);
         assert_eq!((width, height), (600, 400));
     }
 }

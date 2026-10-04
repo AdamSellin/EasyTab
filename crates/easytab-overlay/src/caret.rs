@@ -2,12 +2,14 @@
 //!
 //! Le terminal où l'on tape est la fenêtre au premier plan. On essaie, dans
 //! l'ordre :
-//! 1. le curseur système (`GetGUIThreadInfo`), que certaines applications
-//!    tiennent à jour ;
+//! 1. l'élément qui a le focus, s'il a la taille d'une case : VS Code place
+//!    sa zone de saisie, invisible, exactement sur le curseur. Sa position est
+//!    calculée à la demande, donc à jour, alors que le curseur système de VS
+//!    Code (Chromium) n'est déplacé qu'en retard et reste souvent à gauche ;
 //! 2. UI Automation : le caractère sous le curseur de texte (Windows Terminal
 //!    le fournit) ;
-//! 3. l'élément qui a le focus, s'il a la taille d'une case : VS Code place
-//!    sa zone de saisie, invisible, exactement sur le curseur.
+//! 3. le curseur système (`GetGUIThreadInfo`), que certaines applications
+//!    tiennent à jour.
 
 use std::hash::{Hash, Hasher};
 
@@ -61,12 +63,17 @@ impl Locator {
                 .automation
                 .as_ref()
                 .and_then(|automation| automation.GetFocusedElement().ok());
-            let (rect, cell_width, source) = match system_caret(window) {
-                Some((rect, cell)) => (rect, cell, "système"),
-                None => {
-                    let (rect, cell) = uia_caret(focused.as_ref()?)?;
-                    (rect, cell, "uia")
-                }
+            let (rect, cell_width, source) = if let Some((rect, cell)) =
+                focused.as_ref().and_then(|element| cell_sized(element))
+            {
+                (rect, cell, "zone")
+            } else if let Some((rect, cell)) =
+                focused.as_ref().and_then(|element| text_caret(element))
+            {
+                (rect, cell, "uia")
+            } else {
+                let (rect, cell) = system_caret(window)?;
+                (rect, cell, "système")
             };
             let caret = Caret {
                 rect,
@@ -170,7 +177,8 @@ fn log(source: &str, caret: &Caret) {
     }
 }
 
-unsafe fn uia_caret(element: &IUIAutomationElement) -> Option<(Rect, f64)> {
+/// Curseur de texte UI Automation de l'élément.
+unsafe fn text_caret(element: &IUIAutomationElement) -> Option<(Rect, f64)> {
     let range = element
         .GetCurrentPatternAs::<IUIAutomationTextPattern2>(UIA_TextPattern2Id)
         .ok()
@@ -187,10 +195,12 @@ unsafe fn uia_caret(element: &IUIAutomationElement) -> Option<(Rect, f64)> {
                 .then(|| selection.GetElement(0).ok())
                 .flatten()
         });
-    if let Some(found) = range.and_then(|range| cell_of(&range)) {
-        return Some(found);
-    }
-    // La zone de saisie de VS Code (xterm.js) est posée sur le curseur.
+    range.and_then(|range| cell_of(&range))
+}
+
+/// L'élément lui-même, s'il a la taille d'une case : la zone de saisie de VS
+/// Code (xterm.js) est posée sur le curseur.
+unsafe fn cell_sized(element: &IUIAutomationElement) -> Option<(Rect, f64)> {
     let bounds = element.CurrentBoundingRectangle().ok()?;
     let (width, height) = (
         (bounds.right - bounds.left) as f64,
