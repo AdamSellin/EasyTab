@@ -16,7 +16,7 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use clap::Parser;
 use crossterm::terminal;
-use easytab_core::{Completer, Generators, Session};
+use easytab_core::{Completer, Generators, Session, Usage};
 use popup::{Key, Popup};
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 
@@ -109,7 +109,9 @@ fn run(args: Args) -> Result<i32> {
     let shared = Arc::new(Mutex::new(Shared {
         session: Session::new(rows, cols),
         popup: Popup::default(),
-        completer: Completer::builtin().with_generators(generators),
+        completer: Completer::builtin()
+            .with_generators(generators)
+            .with_usage(load_usage()),
         fallback_cwd,
     }));
     let mut log = open_log();
@@ -156,7 +158,12 @@ fn run(args: Args) -> Result<i32> {
             let mut to_shell = data.to_vec();
             {
                 let mut shared = input_shared.lock().unwrap();
-                let Shared { session, popup, .. } = &mut *shared;
+                let Shared {
+                    session,
+                    popup,
+                    completer,
+                    ..
+                } = &mut *shared;
                 match Key::parse(data).filter(|&key| popup.handles(key)) {
                     Some(key) => {
                         popup.erase(session.screen(), &mut frame);
@@ -174,6 +181,9 @@ fn run(args: Args) -> Result<i32> {
                     None => {
                         // La commande part : la liste ne doit pas rester à l'écran.
                         if Key::submits(data) {
+                            if let Some(line) = session.current_input() {
+                                completer.record(&line);
+                            }
                             popup.erase(session.screen(), &mut frame);
                             session.feed_input(b"\r");
                         }
@@ -349,6 +359,15 @@ fn default_shell() -> String {
         "powershell.exe".into()
     } else {
         "/bin/sh".into()
+    }
+}
+
+/// Historique d'utilisation (`~/.easytab/usage.json`), qui fait remonter les
+/// suggestions les plus utilisées.
+fn load_usage() -> Usage {
+    match dirs::home_dir() {
+        Some(home) => Usage::load(&home.join(".easytab").join("usage.json")),
+        None => Usage::default(),
     }
 }
 

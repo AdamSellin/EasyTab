@@ -270,6 +270,7 @@ dependencies = [
  "anyhow",
  "clap",
  "crossterm",
+ "dirs",
  "easytab-core",
  "portable-pty",
  "unicode-width",

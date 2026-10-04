@@ -3,10 +3,12 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
+use std::sync::Mutex;
 
 use crate::files;
 use crate::generators::{Generators, Item};
 use crate::line::{self, Token};
+use crate::rank::{self, best_match, Usage};
 use crate::spec::{Arg, Bundle, Command, Generator, Opt, Template};
 
 /// Nombre maximum de suggestions renvoyées.
@@ -32,6 +34,9 @@ pub struct Suggestion {
     pub kind: Kind,
     /// Ajouter un espace après l'insertion.
     pub append_space: bool,
+    /// Qualité de la correspondance avec le mot tapé : 0 si le nom commence
+    /// par lui, plus haut pour la recherche floue (voir [`rank::match_rank`]).
+    pub rank: u8,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -47,6 +52,7 @@ pub struct Completer {
     commands: Vec<Command>,
     by_name: HashMap<String, usize>,
     generators: Generators,
+    usage: Mutex<Usage>,
 }
 
 /// Ce que les generators ont besoin de savoir sur la ligne.
@@ -71,7 +77,26 @@ impl Completer {
             commands,
             by_name,
             generators: Generators::disabled(),
+            usage: Mutex::default(),
         }
+    }
+
+    /// Classe aussi les suggestions selon les commandes déjà exécutées.
+    pub fn with_usage(mut self, usage: Usage) -> Self {
+        self.usage = Mutex::new(usage);
+        self
+    }
+
+    /// Note les mots d'une commande exécutée.
+    pub fn record(&self, input: &str) {
+        let line = line::parse(input);
+        let words: Vec<String> = line
+            .words
+            .iter()
+            .chain([&line.current])
+            .map(|t| t.value.clone())
+            .collect();
+        self.usage.lock().unwrap().record(&words);
     }
 
     /// Completer avec les specs embarquées, sans generators.
@@ -95,12 +120,25 @@ impl Completer {
             pending: false,
         };
         self.complete_words(&line.words, &line.current, &mut context, &mut out);
+        self.rank(&context.tokens, &mut out);
         out.truncate(MAX_SUGGESTIONS);
         Completion {
             replace: line.current.raw,
             suggestions: out,
             pending: context.pending,
         }
+    }
+
+    /// Trie les suggestions : d'abord la qualité de la correspondance, puis la
+    /// fréquence d'utilisation ; à égalité, l'ordre d'origine (alphabétique,
+    /// ou celui du generator, comme les branches les plus récentes d'abord).
+    fn rank(&self, tokens: &[String], out: &mut [Suggestion]) {
+        let before = tokens.split_last().map_or(&[][..], |(_, before)| before);
+        let usage = self.usage.lock().unwrap();
+        out.sort_by_cached_key(|s| {
+            let word = s.insert.trim_end_matches('=');
+            (s.rank, std::cmp::Reverse(usage.count(before, word)))
+        });
     }
 
     fn find(&self, name: &str) -> Option<&Command> {
@@ -219,13 +257,15 @@ impl Completer {
             .commands
             .iter()
             .flat_map(|c| c.names.iter().map(move |n| (n, c)))
-            .filter(|(name, _)| name.starts_with(prefix))
-            .map(|(name, command)| Suggestion {
-                label: name.clone(),
-                insert: name.clone(),
-                description: command.description.clone(),
-                kind: Kind::Command,
-                append_space: true,
+            .filter_map(|(name, command)| {
+                Some(Suggestion {
+                    rank: rank::match_rank(name, prefix)?,
+                    label: name.clone(),
+                    insert: name.clone(),
+                    description: command.description.clone(),
+                    kind: Kind::Command,
+                    append_space: true,
+                })
             })
             .collect();
         sort(&mut found);
@@ -245,9 +285,10 @@ impl Completer {
             .iter()
             .filter(|v| !v.hidden)
             .filter_map(|v| {
-                let name = v.names.iter().find(|n| n.starts_with(prefix))?;
+                let (name, rank) = best_match(&v.names, prefix)?;
                 let insert = v.insert.clone().unwrap_or_else(|| line::escape(name));
                 Some(Suggestion {
+                    rank,
                     label: name.clone(),
                     append_space: !insert.ends_with(['/', '=']),
                     insert: format!("{insert_prefix}{insert}"),
@@ -288,6 +329,7 @@ impl Completer {
                         Kind::File
                     },
                     append_space: !entry.is_dir,
+                    rank: 0,
                 }),
         );
     }
@@ -312,8 +354,9 @@ fn push_subcommands(node: &Command, prefix: &str, out: &mut Vec<Suggestion>) {
         .iter()
         .filter(|s| !s.hidden)
         .filter_map(|s| {
-            let name = s.names.iter().find(|n| n.starts_with(prefix))?;
+            let (name, rank) = best_match(&s.names, prefix)?;
             Some(Suggestion {
+                rank,
                 label: name.clone(),
                 insert: s.insert.clone().unwrap_or_else(|| name.clone()),
                 description: s.description.clone(),
@@ -334,7 +377,7 @@ fn push_options(node: &Command, persistent: &[&Opt], prefix: &str, out: &mut Vec
         .chain(persistent.iter().copied())
         .filter(|o| !o.hidden && seen.insert(o.names.first()))
         .filter_map(|o| {
-            let name = o.names.iter().find(|n| n.starts_with(prefix))?;
+            let (name, rank) = best_match(&o.names, prefix)?;
             let takes_equals = o.requires_equals && !o.args.is_empty();
             let insert = match &o.insert {
                 Some(insert) => insert.clone(),
@@ -342,6 +385,7 @@ fn push_options(node: &Command, persistent: &[&Opt], prefix: &str, out: &mut Vec
                 None => name.clone(),
             };
             Some(Suggestion {
+                rank,
                 label: o.names.join(", "),
                 insert,
                 description: o.description.clone(),
@@ -373,7 +417,7 @@ fn push_generated(
     };
     let mut seen: HashSet<String> = out.iter().map(|s| s.label.clone()).collect();
     for item in items {
-        let Some(name) = item.names.iter().find(|n| n.starts_with(query)) else {
+        let Some((name, rank)) = best_match(&item.names, query) else {
             continue;
         };
         if !seen.insert(name.clone()) {
@@ -390,6 +434,7 @@ fn push_generated(
             insert,
             description: item.description.clone(),
             kind: Kind::Value,
+            rank,
         });
     }
 }
@@ -443,13 +488,24 @@ mod tests {
         let found = labels("git ch");
         assert!(found.contains(&"checkout".to_string()), "{found:?}");
         assert!(found.contains(&"cherry-pick".to_string()), "{found:?}");
-        assert!(found.iter().all(|l| l.starts_with("ch")), "{found:?}");
+        // Les noms qui commencent par « ch » d'abord, la recherche floue après.
+        let prefixed = found.iter().take_while(|l| l.starts_with("ch")).count();
+        assert!(prefixed >= 2, "{found:?}");
+        assert!(
+            found[prefixed..].iter().all(|l| !l.starts_with("ch")),
+            "{found:?}"
+        );
     }
 
     #[test]
     fn suggests_options_of_the_current_subcommand() {
         let found = labels("git commit --am");
-        assert_eq!(found, ["--amend"]);
+        assert_eq!(found[0], "--amend");
+        // Puis la recherche floue (« a » puis « m » : --allow-empty…).
+        assert!(
+            found[1..].iter().all(|l| !l.starts_with("--am")),
+            "{found:?}"
+        );
     }
 
     #[test]
@@ -540,5 +596,26 @@ mod tests {
             .collect();
         assert_eq!(found, ["feature/login"]);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn finds_fuzzy_matches_and_ranks_by_usage() {
+        let found = labels("git chk");
+        assert_eq!(
+            found.first().map(String::as_str),
+            Some("checkout"),
+            "{found:?}"
+        );
+
+        let completer = Completer::builtin();
+        completer.record("git cherry-pick abc");
+        completer.record("git cherry-pick def");
+        let found: Vec<_> = completer
+            .complete("git che", Path::new("/nonexistent"))
+            .suggestions
+            .into_iter()
+            .map(|s| s.label)
+            .collect();
+        assert_eq!(found[0], "cherry-pick", "{found:?}");
     }
 }

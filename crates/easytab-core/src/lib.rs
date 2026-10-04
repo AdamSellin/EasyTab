@@ -15,10 +15,12 @@ mod files;
 mod generators;
 pub mod line;
 mod osc;
+mod rank;
 mod session;
 pub mod spec;
 
 pub use complete::{Completer, Completion, Kind, Suggestion};
 pub use generators::Generators;
 pub use osc::{Marker, OscScanner};
+pub use rank::Usage;
 pub use session::{Phase, Session};
