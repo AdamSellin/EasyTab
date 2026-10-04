@@ -2,7 +2,9 @@
 //! arguments de chaque CLI. Le format est celui produit par
 //! `tools/import-fig-specs.mjs` à partir des specs Fig.
 
-use serde::Deserialize;
+use std::collections::HashMap;
+
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
@@ -14,6 +16,9 @@ pub struct Command {
     pub args: Vec<Arg>,
     pub hidden: bool,
     pub insert: Option<String>,
+    /// Module JavaScript d'où viennent les generators de la spec (voir
+    /// [`Modules`]). Seulement sur une spec de premier niveau.
+    pub module: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -42,6 +47,27 @@ pub struct Arg {
     pub is_command: bool,
     pub suggestions: Vec<Value>,
     pub templates: Vec<Template>,
+    pub generators: Vec<Generator>,
+}
+
+/// Generator Fig : suggestions calculées par le JavaScript de la spec.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct Generator {
+    /// Chemin du generator dans l'objet exporté par le module de la spec.
+    pub path: Vec<PathKey>,
+    /// Les résultats sont recalculés quand ce texte apparaît dans le mot en cours.
+    pub trigger: Option<String>,
+    /// Seule la partie du mot après la dernière occurrence de ce texte sert à
+    /// filtrer les résultats (et est remplacée à l'insertion).
+    pub query_term: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize, Serialize)]
+#[serde(untagged)]
+pub enum PathKey {
+    Index(usize),
+    Key(String),
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -71,5 +97,20 @@ impl Bundle {
     pub fn builtin() -> Self {
         serde_json::from_str(include_str!("../../../specs/specs.json"))
             .expect("specs/specs.json invalide")
+    }
+}
+
+/// Code JavaScript des specs qui ont des generators, par nom de module.
+#[derive(Debug, Deserialize)]
+pub struct Modules {
+    pub source: String,
+    pub modules: HashMap<String, String>,
+}
+
+impl Modules {
+    /// Modules embarqués dans le binaire (`specs/modules.json`).
+    pub fn builtin() -> Self {
+        serde_json::from_str(include_str!("../../../specs/modules.json"))
+            .expect("specs/modules.json invalide")
     }
 }

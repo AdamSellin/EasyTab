@@ -109,6 +109,8 @@ impl Session {
     fn apply(&mut self, marker: Marker) {
         self.phase = match marker {
             Marker::WorkingDirectory(path) => {
+                #[cfg(windows)]
+                let path = crate::osc::msys_to_windows(&path).unwrap_or(path);
                 self.cwd = Some(path);
                 return;
             }

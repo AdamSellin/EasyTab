@@ -5,8 +5,9 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use crate::files;
+use crate::generators::{Generators, Item};
 use crate::line::{self, Token};
-use crate::spec::{Arg, Bundle, Command, Opt, Template};
+use crate::spec::{Arg, Bundle, Command, Generator, Opt, Template};
 
 /// Nombre maximum de suggestions renvoyées.
 const MAX_SUGGESTIONS: usize = 300;
@@ -38,11 +39,24 @@ pub struct Completion {
     /// Mot en cours tel que tapé : c'est lui que l'insertion remplace.
     pub replace: String,
     pub suggestions: Vec<Suggestion>,
+    /// Des generators calculent encore des suggestions pour cette ligne.
+    pub pending: bool,
 }
 
 pub struct Completer {
     commands: Vec<Command>,
     by_name: HashMap<String, usize>,
+    generators: Generators,
+}
+
+/// Ce que les generators ont besoin de savoir sur la ligne.
+struct Context<'a> {
+    cwd: &'a Path,
+    /// Mots de la commande, du nom de la commande au mot en cours compris.
+    tokens: Vec<String>,
+    /// Module JS de la spec en cours.
+    module: Option<&'a str>,
+    pending: bool,
 }
 
 impl Completer {
@@ -53,22 +67,39 @@ impl Completer {
                 by_name.entry(name.clone()).or_insert(i);
             }
         }
-        Self { commands, by_name }
+        Self {
+            commands,
+            by_name,
+            generators: Generators::disabled(),
+        }
     }
 
-    /// Completer avec les specs embarquées.
+    /// Completer avec les specs embarquées, sans generators.
     pub fn builtin() -> Self {
         Self::new(Bundle::builtin().specs)
+    }
+
+    /// Active les suggestions dynamiques.
+    pub fn with_generators(mut self, generators: Generators) -> Self {
+        self.generators = generators;
+        self
     }
 
     pub fn complete(&self, input: &str, cwd: &Path) -> Completion {
         let line = line::parse(input);
         let mut out = Vec::new();
-        self.complete_words(&line.words, &line.current, cwd, &mut out);
+        let mut context = Context {
+            cwd,
+            tokens: Vec::new(),
+            module: None,
+            pending: false,
+        };
+        self.complete_words(&line.words, &line.current, &mut context, &mut out);
         out.truncate(MAX_SUGGESTIONS);
         Completion {
             replace: line.current.raw,
             suggestions: out,
+            pending: context.pending,
         }
     }
 
@@ -78,11 +109,11 @@ impl Completer {
         self.by_name.get(name).map(|&i| &self.commands[i])
     }
 
-    fn complete_words(
-        &self,
+    fn complete_words<'a>(
+        &'a self,
         words: &[Token],
         current: &Token,
-        cwd: &Path,
+        context: &mut Context<'a>,
         out: &mut Vec<Suggestion>,
     ) {
         let Some((name, rest)) = words.split_first() else {
@@ -92,6 +123,12 @@ impl Completer {
         let Some(spec) = self.find(&name.value) else {
             return;
         };
+        context.module = spec.module.as_deref();
+        context.tokens = words
+            .iter()
+            .chain([current])
+            .map(|t| t.value.clone())
+            .collect();
 
         let mut node = spec;
         let mut persistent: Vec<&Opt> = node.options.iter().filter(|o| o.persistent).collect();
@@ -133,7 +170,7 @@ impl Completer {
             if let Some(arg) = node.args.get(positional) {
                 if arg.is_command {
                     // `sudo git ch` : on recommence avec la commande imbriquée.
-                    return self.complete_words(&rest[i..], current, cwd, out);
+                    return self.complete_words(&rest[i..], current, context, out);
                 }
                 if !arg.variadic {
                     positional += 1;
@@ -143,14 +180,14 @@ impl Completer {
 
         let prefix = current.value.as_str();
         if let Some(arg) = pending {
-            push_arg(arg, prefix, "", cwd, out);
+            self.push_arg(arg, prefix, "", context, out);
             return;
         }
         if !options_done && prefix.starts_with('-') {
             if let Some((flag, value)) = prefix.split_once('=') {
                 if let Some(arg) = find_option(node, &persistent, flag).and_then(|o| o.args.first())
                 {
-                    push_arg(arg, value, &format!("{flag}="), cwd, out);
+                    self.push_arg(arg, value, &format!("{flag}="), context, out);
                 }
             } else {
                 push_options(node, &persistent, prefix, out);
@@ -164,10 +201,12 @@ impl Completer {
             if arg.is_command {
                 self.push_commands(prefix, out);
             } else {
-                push_arg(arg, prefix, "", cwd, out);
+                self.push_arg(arg, prefix, "", context, out);
             }
         }
-        if out.is_empty() && prefix.is_empty() {
+        // Les options ne servent qu'à défaut d'autre chose : pas pendant que des
+        // generators calculent.
+        if out.is_empty() && prefix.is_empty() && !context.pending {
             push_options(node, &persistent, prefix, out);
         }
     }
@@ -191,6 +230,66 @@ impl Completer {
             .collect();
         sort(&mut found);
         out.extend(found);
+    }
+
+    fn push_arg(
+        &self,
+        arg: &Arg,
+        prefix: &str,
+        insert_prefix: &str,
+        context: &mut Context,
+        out: &mut Vec<Suggestion>,
+    ) {
+        let mut found: Vec<Suggestion> = arg
+            .suggestions
+            .iter()
+            .filter(|v| !v.hidden)
+            .filter_map(|v| {
+                let name = v.names.iter().find(|n| n.starts_with(prefix))?;
+                let insert = v.insert.clone().unwrap_or_else(|| line::escape(name));
+                Some(Suggestion {
+                    label: name.clone(),
+                    append_space: !insert.ends_with(['/', '=']),
+                    insert: format!("{insert_prefix}{insert}"),
+                    description: v.description.clone().or_else(|| arg.description.clone()),
+                    kind: Kind::Value,
+                })
+            })
+            .collect();
+        sort(&mut found);
+        out.extend(found);
+
+        if let Some(module) = context.module {
+            for generator in &arg.generators {
+                match self
+                    .generators
+                    .lookup(module, generator, context.cwd, &context.tokens)
+                {
+                    Some(items) => push_generated(&items, generator, prefix, insert_prefix, out),
+                    None => context.pending = true,
+                }
+            }
+        }
+
+        if arg.templates.is_empty() {
+            return;
+        }
+        let folders_only = !arg.templates.contains(&Template::Filepaths);
+        out.extend(
+            files::complete(context.cwd, prefix, folders_only)
+                .into_iter()
+                .map(|entry| Suggestion {
+                    label: entry.name,
+                    insert: format!("{insert_prefix}{}", line::escape(&entry.path)),
+                    description: None,
+                    kind: if entry.is_dir {
+                        Kind::Folder
+                    } else {
+                        Kind::File
+                    },
+                    append_space: !entry.is_dir,
+                }),
+        );
     }
 }
 
@@ -255,45 +354,57 @@ fn push_options(node: &Command, persistent: &[&Opt], prefix: &str, out: &mut Vec
     out.extend(found);
 }
 
-fn push_arg(arg: &Arg, prefix: &str, insert_prefix: &str, cwd: &Path, out: &mut Vec<Suggestion>) {
-    let mut found: Vec<Suggestion> = arg
-        .suggestions
-        .iter()
-        .filter(|v| !v.hidden)
-        .filter_map(|v| {
-            let name = v.names.iter().find(|n| n.starts_with(prefix))?;
-            let insert = v.insert.clone().unwrap_or_else(|| line::escape(name));
-            Some(Suggestion {
-                label: name.clone(),
-                append_space: !insert.ends_with(['/', '=']),
-                insert: format!("{insert_prefix}{insert}"),
-                description: v.description.clone().or_else(|| arg.description.clone()),
-                kind: Kind::Value,
-            })
-        })
-        .collect();
-    sort(&mut found);
-    out.extend(found);
-
-    if arg.templates.is_empty() {
-        return;
+/// Résultats d'un generator qui complètent le mot en cours.
+fn push_generated(
+    items: &[Item],
+    generator: &Generator,
+    prefix: &str,
+    insert_prefix: &str,
+    out: &mut Vec<Suggestion>,
+) {
+    // Avec `query_term`, seule la fin du mot est complétée (`origin/ma`).
+    let (head, query) = match generator
+        .query_term
+        .as_deref()
+        .and_then(|sep| prefix.rfind(sep).map(|i| i + sep.len()))
+    {
+        Some(i) => prefix.split_at(i),
+        None => ("", prefix),
+    };
+    let mut seen: HashSet<String> = out.iter().map(|s| s.label.clone()).collect();
+    for item in items {
+        let Some(name) = item.names.iter().find(|n| n.starts_with(query)) else {
+            continue;
+        };
+        if !seen.insert(name.clone()) {
+            continue;
+        }
+        let value = match &item.insert {
+            Some(insert) => strip_cursor(insert),
+            None => line::escape(name),
+        };
+        let insert = format!("{insert_prefix}{}{value}", line::escape(head));
+        out.push(Suggestion {
+            label: name.clone(),
+            append_space: !insert.ends_with(['/', '=']),
+            insert,
+            description: item.description.clone(),
+            kind: Kind::Value,
+        });
     }
-    let folders_only = !arg.templates.contains(&Template::Filepaths);
-    out.extend(
-        files::complete(cwd, prefix, folders_only)
-            .into_iter()
-            .map(|entry| Suggestion {
-                label: entry.name,
-                insert: format!("{insert_prefix}{}", line::escape(&entry.path)),
-                description: None,
-                kind: if entry.is_dir {
-                    Kind::Folder
-                } else {
-                    Kind::File
-                },
-                append_space: !entry.is_dir,
-            }),
-    );
+}
+
+/// Retire le marqueur `{cursor}` des valeurs à insérer de Fig.
+fn strip_cursor(insert: &str) -> String {
+    match insert.find("{cursor") {
+        Some(start) => {
+            let end = insert[start..]
+                .find('}')
+                .map_or(insert.len(), |i| start + i + 1);
+            format!("{}{}", &insert[..start], &insert[end..])
+        }
+        None => insert.to_string(),
+    }
 }
 
 fn sort(found: &mut [Suggestion]) {
@@ -303,6 +414,7 @@ fn sort(found: &mut [Suggestion]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Generators;
     use std::path::PathBuf;
 
     fn completer() -> &'static Completer {
@@ -385,5 +497,48 @@ mod tests {
             .map(|s| s.insert)
             .collect();
         assert_eq!(found, ["notes.txt"]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn suggests_git_branches_from_generators() {
+        use std::process::Command as Process;
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        let dir = std::env::temp_dir().join(format!("easytab-git-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let git = |args: &[&str]| {
+            let status = Process::new("git")
+                .args(["-c", "user.name=t", "-c", "user.email=t@t"])
+                .args(args)
+                .current_dir(&dir)
+                .output()
+                .unwrap()
+                .status;
+            assert!(status.success(), "git {args:?}");
+        };
+        git(&["init", "-q", "-b", "main"]);
+        git(&["commit", "-q", "--allow-empty", "-m", "init"]);
+        git(&["branch", "feature/login"]);
+
+        let (ready, notified) = mpsc::channel();
+        let completer = Completer::builtin().with_generators(Generators::start(move || {
+            let _ = ready.send(());
+        }));
+        let mut completion = completer.complete("git switch fe", &dir);
+        assert!(completion.pending);
+        while completion.pending {
+            notified.recv_timeout(Duration::from_secs(10)).unwrap();
+            completion = completer.complete("git switch fe", &dir);
+        }
+        let found: Vec<_> = completion
+            .suggestions
+            .iter()
+            .map(|s| s.insert.as_str())
+            .collect();
+        assert_eq!(found, ["feature/login"]);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

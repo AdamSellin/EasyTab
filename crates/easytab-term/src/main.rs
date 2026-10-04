@@ -16,7 +16,7 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use clap::Parser;
 use crossterm::terminal;
-use easytab_core::{Completer, Session};
+use easytab_core::{Completer, Generators, Session};
 use popup::{Key, Popup};
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 
@@ -46,6 +46,16 @@ impl Shared {
         self.popup
             .update(&self.session, &self.completer, &self.fallback_cwd);
         self.popup.draw(self.session.screen(), frame);
+    }
+
+    /// Des suggestions dynamiques sont arrivées : redessine la liste.
+    fn reload(&mut self, frame: &mut Vec<u8>) {
+        if !self.session.at_boundary() {
+            return;
+        }
+        self.popup.erase(self.session.screen(), frame);
+        self.popup.reload();
+        self.refresh(frame);
     }
 }
 
@@ -92,10 +102,14 @@ fn run(args: Args) -> Result<i32> {
     let mut reader = pair.master.try_clone_reader()?;
     let mut writer = pair.master.take_writer()?;
     let master = pair.master;
+    let (generated, generated_rx) = mpsc::channel();
+    let generators = Generators::start(move || {
+        let _ = generated.send(());
+    });
     let shared = Arc::new(Mutex::new(Shared {
         session: Session::new(rows, cols),
         popup: Popup::default(),
-        completer: Completer::builtin(),
+        completer: Completer::builtin().with_generators(generators),
         fallback_cwd,
     }));
     let mut log = open_log();
@@ -165,6 +179,23 @@ fn run(args: Args) -> Result<i32> {
                     shared.popup.forget();
                     shared.session.resize(rows, cols);
                 }
+            }
+        }
+    });
+
+    // Suggestions dynamiques (branches git…) arrivées en arrière-plan.
+    let generated_shared = Arc::clone(&shared);
+    thread::spawn(move || {
+        while generated_rx.recv().is_ok() {
+            // Plusieurs generators finissent souvent ensemble : un seul dessin.
+            while generated_rx.try_recv().is_ok() {}
+            let mut frame = Vec::new();
+            // Le verrou est gardé pendant l'écriture, comme dans les autres fils.
+            let mut shared = generated_shared.lock().unwrap();
+            shared.reload(&mut frame);
+            if !frame.is_empty() {
+                let mut stdout = io::stdout().lock();
+                let _ = stdout.write_all(&frame).and_then(|_| stdout.flush());
             }
         }
     });

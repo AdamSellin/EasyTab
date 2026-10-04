@@ -3,9 +3,10 @@
 Autocomplétion graphique pour le terminal (Windows, Linux, macOS), dans l'esprit de Fig :
 une liste de suggestions style IDE qui s'affiche pendant que tu tapes une commande.
 
-> **État : premières suggestions.** Une liste s'affiche dans le terminal pendant la frappe,
-> pour 47 commandes courantes (git, docker, npm, cargo, kubectl…) et les fichiers et
-> dossiers. Voir la suite du plan dans [docs/architecture.md](docs/architecture.md).
+> **État : suggestions dynamiques.** Une liste s'affiche dans le terminal pendant la frappe,
+> pour 47 commandes courantes (git, docker, npm, cargo, kubectl…), les fichiers et dossiers,
+> et les valeurs propres à ton projet : branches git, scripts npm, conteneurs docker… Voir la
+> suite du plan dans [docs/architecture.md](docs/architecture.md).
 
 ## Utilisation
 
@@ -16,6 +17,11 @@ une liste de suggestions style IDE qui s'affiche pendant que tu tapes une comman
 | Échap | Fermer la liste jusqu'à la prochaine frappe |
 
 Quand la liste est fermée, Tab garde son comportement habituel (complétion du shell).
+
+Les suggestions dynamiques (branches, scripts…) viennent des *generators* des specs Fig : EasyTab
+lance la commande prévue par la spec (`git branch`, lecture de `package.json`…) en arrière-plan,
+passe sa sortie au JavaScript de la spec dans un moteur JS embarqué (QuickJS), puis complète la
+liste dès que le résultat arrive. La frappe n'attend jamais.
 
 ## Organisation
 
@@ -37,10 +43,14 @@ Sous Windows, utilise le toolchain Rust MSVC (`rustup default stable-msvc`).
 
 ```sh
 cargo build --release
-./target/release/easytab install      # ajoute un bloc à ~/.zshrc ou ~/.bashrc
+./target/release/easytab install      # copie les programmes dans ~/.easytab/bin et ajoute un bloc à ~/.zshrc ou ~/.bashrc
 # ouvre un nouveau terminal, puis :
-./target/release/easytab doctor       # vérifie que tout est actif
+easytab doctor                        # ou ~/.easytab/bin/easytab doctor
 ```
+
+Après une nouvelle compilation, relance `./target/release/easytab install` pour mettre à jour la
+copie installée. Les terminaux déjà ouverts gardent l'ancienne version jusqu'à leur fermeture
+(sous Windows, elle est mise de côté puis effacée à l'installation suivante).
 
 Pour voir ce qu'EasyTab détecte pendant la frappe :
 

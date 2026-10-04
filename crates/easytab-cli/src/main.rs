@@ -100,7 +100,7 @@ fn init_script(shell: Shell) -> Result<String> {
 }
 
 fn install(shell: Shell) -> Result<()> {
-    let exe = std::env::current_exe().context("chemin de easytab introuvable")?;
+    let exe = copy_binaries()?;
     let line = format!(
         "eval \"$({} init {})\"",
         rc::shell_quote(&exe.to_string_lossy()),
@@ -113,11 +113,76 @@ fn install(shell: Shell) -> Result<()> {
     fs::write(&path, rc::add_blocks(&rc::remove_blocks(&content), &line))
         .with_context(|| format!("écriture de {}", path.display()))?;
     println!(
-        "EasyTab est {} dans {}. Ouvre un nouveau terminal pour l'activer.",
+        "EasyTab est {} dans {} (programmes dans {}). Ouvre un nouveau terminal pour l'activer.",
         if updated { "mis à jour" } else { "installé" },
-        path.display()
+        path.display(),
+        exe.parent().unwrap_or(&exe).display()
     );
     Ok(())
+}
+
+/// Dossier où `install` copie les programmes : le fichier de config du shell
+/// pointe vers lui plutôt que vers le dossier de compilation.
+fn install_dir() -> Result<PathBuf> {
+    let home = dirs::home_dir().context("dossier personnel introuvable")?;
+    Ok(home.join(".easytab").join("bin"))
+}
+
+/// Copie `easytab` et `easytab-term` dans [`install_dir`] ; renvoie le chemin
+/// de `easytab` installé.
+fn copy_binaries() -> Result<PathBuf> {
+    let exe = std::env::current_exe().context("chemin de easytab introuvable")?;
+    let dir = install_dir()?;
+    if exe.parent() == Some(dir.as_path()) {
+        return Ok(exe);
+    }
+    let term = term_binary();
+    if !term.is_file() {
+        bail!(
+            "{} introuvable à côté de {} : compile tout le projet (cargo build --release)",
+            term.display(),
+            exe.display()
+        );
+    }
+    fs::create_dir_all(&dir).with_context(|| format!("création de {}", dir.display()))?;
+    remove_old_copies(&dir);
+    let mut installed = None;
+    for source in [&exe, &term] {
+        let name = source.file_name().context("nom de programme invalide")?;
+        let target = dir.join(name);
+        replace_file(source, &target)?;
+        if source == &exe {
+            installed = Some(target);
+        }
+    }
+    installed.context("copie de easytab")
+}
+
+/// Remplace `target` par une copie de `source`. Sous Windows, un programme en
+/// cours d'exécution (dans un terminal ouvert) ne peut pas être effacé, mais
+/// peut être renommé : l'ancienne version est mise de côté.
+fn replace_file(source: &Path, target: &Path) -> Result<()> {
+    if target.exists() && fs::remove_file(target).is_err() {
+        let mut aside = target.as_os_str().to_owned();
+        aside.push(format!(".old-{}", std::process::id()));
+        fs::rename(target, &aside)
+            .with_context(|| format!("{} est verrouillé", target.display()))?;
+    }
+    fs::copy(source, target)
+        .with_context(|| format!("copie de {} vers {}", source.display(), target.display()))?;
+    Ok(())
+}
+
+/// Efface les anciennes versions mises de côté, quand plus rien ne les utilise.
+fn remove_old_copies(dir: &Path) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        if entry.file_name().to_string_lossy().contains(".old-") {
+            let _ = fs::remove_file(entry.path());
+        }
+    }
 }
 
 fn uninstall(shell: Shell) -> Result<()> {
