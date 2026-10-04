@@ -108,14 +108,13 @@ fn install(shell: Shell) -> Result<()> {
     );
     let path = shell.rc_file()?;
     let content = read_or_empty(&path)?;
-    if rc::has_block(&content) {
-        println!("EasyTab est déjà installé dans {}", path.display());
-        return Ok(());
-    }
-    fs::write(&path, rc::add_block(&content, &line))
+    let updated = rc::has_block(&content);
+    // Réinstaller remplace les anciens blocs par ceux de cette version.
+    fs::write(&path, rc::add_blocks(&rc::remove_blocks(&content), &line))
         .with_context(|| format!("écriture de {}", path.display()))?;
     println!(
-        "EasyTab est installé dans {}. Ouvre un nouveau terminal pour l'activer.",
+        "EasyTab est {} dans {}. Ouvre un nouveau terminal pour l'activer.",
+        if updated { "mis à jour" } else { "installé" },
         path.display()
     );
     Ok(())
@@ -128,7 +127,7 @@ fn uninstall(shell: Shell) -> Result<()> {
         println!("EasyTab n'est pas installé dans {}", path.display());
         return Ok(());
     }
-    fs::write(&path, rc::remove_block(&content))
+    fs::write(&path, rc::remove_blocks(&content))
         .with_context(|| format!("écriture de {}", path.display()))?;
     println!("EasyTab est retiré de {}", path.display());
     Ok(())

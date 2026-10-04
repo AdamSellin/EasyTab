@@ -6,7 +6,7 @@
 mod popup;
 
 use std::fs::{File, OpenOptions};
-use std::io::{self, Read, Write};
+use std::io::{self, IsTerminal, Read, Write};
 use std::path::PathBuf;
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
@@ -23,6 +23,8 @@ use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 /// Variable posée dans l'environnement du shell lancé, pour que l'intégration
 /// shell sache qu'elle tourne déjà sous EasyTab.
 const ACTIVE_ENV: &str = "EASYTAB_TERM";
+/// Désactive l'intégration shell (évite que le shell relance EasyTab).
+const DISABLE_ENV: &str = "EASYTAB_DISABLE";
 /// Si elle est définie, chaque changement de la ligne en cours y est journalisé.
 const LOG_ENV: &str = "EASYTAB_LOG";
 
@@ -68,6 +70,9 @@ fn run(args: Args) -> Result<i32> {
         .shell
         .or_else(|| std::env::var("SHELL").ok())
         .unwrap_or_else(default_shell);
+    if !terminal_supported() {
+        return run_direct(&shell, &args.args);
+    }
     let (cols, rows) = terminal_size().unwrap_or((80, 24));
 
     let pair = native_pty_system()
@@ -207,6 +212,25 @@ fn run(args: Args) -> Result<i32> {
     let _ = output_finished.recv_timeout(Duration::from_millis(500));
     drop(raw_mode);
     Ok(status.exit_code() as i32)
+}
+
+/// EasyTab a besoin d'un vrai terminal des deux côtés. Sous Windows, mintty
+/// (fenêtre « Git Bash » par défaut) ne fournit pas de console aux programmes
+/// Windows : la pseudo-console attendrait une réponse qui ne vient jamais.
+fn terminal_supported() -> bool {
+    io::stdin().is_terminal()
+        && io::stdout().is_terminal()
+        && !(cfg!(windows) && std::env::var("TERM_PROGRAM").as_deref() == Ok("mintty"))
+}
+
+/// Lance le shell sans EasyTab, avec l'intégration désactivée.
+fn run_direct(shell: &str, args: &[String]) -> Result<i32> {
+    let status = std::process::Command::new(shell)
+        .args(args)
+        .env(DISABLE_ENV, "1")
+        .status()
+        .with_context(|| format!("lancement de {shell}"))?;
+    Ok(status.code().unwrap_or(1))
 }
 
 /// Taille du terminal (colonnes, lignes), ou `None` si elle est inconnue ou nulle.

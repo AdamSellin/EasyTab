@@ -1,4 +1,7 @@
 # Intégration EasyTab pour zsh, générée par `easytab init zsh`.
+# `easytab install` la charge deux fois : en haut du ~/.zshrc, pour relancer le
+# shell sous EasyTab avant de lire le reste, et en bas, pour poser les hooks
+# après les thèmes de prompt.
 # Désactiver ponctuellement : EASYTAB_DISABLE=1 zsh
 
 # 1. Hors d'EasyTab : relance ce shell sous le wrapper PTY.
@@ -8,9 +11,7 @@ if [[ -z "$EASYTAB_TERM" && -z "$EASYTAB_DISABLE" && -o interactive && -t 0 && -
 fi
 
 # 2. Sous EasyTab : émet les marqueurs de prompt (OSC 133) et le dossier courant (OSC 7).
-if [[ -n "$EASYTAB_TERM" && -z "$__easytab_loaded" ]]; then
-  __easytab_loaded=1
-
+if [[ -n "$EASYTAB_TERM" ]]; then
   __easytab_precmd() {
     local code=$?
     print -n "\e]133;D;${code}\a\e]7;file://${HOST}${PWD// /%20}\a\e]133;A\a"
@@ -22,6 +23,7 @@ if [[ -n "$EASYTAB_TERM" && -z "$__easytab_loaded" ]]; then
     print -n "\e]133;C\a"
   }
 
+  # add-zsh-hook ignore un hook déjà présent : ce script peut être chargé deux fois.
   autoload -Uz add-zsh-hook
   add-zsh-hook precmd __easytab_precmd
   add-zsh-hook preexec __easytab_preexec
