@@ -22,20 +22,10 @@ use windows::Win32::UI::Accessibility::{
     UIA_TextPatternId,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    GetForegroundWindow, GetGUIThreadInfo, GetWindowRect, GetWindowThreadProcessId, GUITHREADINFO,
+    GetForegroundWindow, GetGUIThreadInfo, GetWindowThreadProcessId, GUITHREADINFO,
 };
 
-use crate::placement::Rect;
-
-/// Le curseur, la largeur d'une case et la fenêtre du terminal.
-#[derive(Debug, Clone, Copy)]
-pub struct Caret {
-    pub rect: Rect,
-    pub cell_width: f64,
-    pub window: isize,
-    /// Position de la fenêtre du terminal, pour savoir si elle a bougé.
-    pub window_rect: Rect,
-}
+use crate::placement::{Caret, Rect};
 
 /// Plus grande case de texte crédible, en pixels (polices agrandies, écrans
 /// à forte densité compris).
@@ -71,7 +61,6 @@ impl Locator {
                 rect,
                 cell_width,
                 window: window.0 as isize,
-                window_rect: window_rect(window.0 as isize)?,
             })
         }
     }
@@ -81,13 +70,6 @@ impl Locator {
 pub fn foreground() -> isize {
     // SAFETY: lecture sans paramètre.
     unsafe { GetForegroundWindow().0 as isize }
-}
-
-pub fn window_rect(window: isize) -> Option<Rect> {
-    let mut rect = RECT::default();
-    // SAFETY: `rect` vit pendant l'appel.
-    unsafe { GetWindowRect(HWND(window as _), &mut rect).ok()? };
-    Some(to_rect(rect))
 }
 
 unsafe fn system_caret(window: HWND) -> Option<(Rect, f64)> {

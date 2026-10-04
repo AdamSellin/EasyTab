@@ -75,7 +75,7 @@ impl Shared {
     /// terminal.
     fn show(&mut self, frame: &mut Vec<u8>) {
         match self.overlay.as_mut().filter(|overlay| overlay.usable()) {
-            Some(overlay) => overlay.show(self.popup.view()),
+            Some(overlay) => overlay.show(self.popup.view(self.session.screen())),
             None => self.popup.draw(self.session.screen(), frame),
         }
     }
