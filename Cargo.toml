@@ -1,0 +1,18 @@
+[workspace]
+resolver = "2"
+members = ["crates/easytab-core", "crates/easytab-term", "crates/easytab-cli"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/AdamSellin/EasyTab"
+
+[workspace.dependencies]
+easytab-core = { path = "crates/easytab-core" }
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+crossterm = "0.29"
+dirs = "7"
+portable-pty = "0.9"
+vt100 = "0.16"

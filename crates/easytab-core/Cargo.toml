@@ -1,0 +1,10 @@
+[package]
+name = "easytab-core"
+description = "Suivi de la ligne de commande en cours à partir du flux du terminal"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+vt100.workspace = true
