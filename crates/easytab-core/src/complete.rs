@@ -22,6 +22,8 @@ pub enum Kind {
     Value,
     Folder,
     File,
+    /// Valeur calculée par un generator (branche git, script npm…).
+    Dynamic,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -31,6 +33,8 @@ pub struct Suggestion {
     /// Texte qui remplace le mot en cours, déjà échappé pour le shell.
     pub insert: String,
     pub description: Option<String>,
+    /// Arguments attendus, affichés en gris après le nom (`<mode>`, `[pathspec...]`).
+    pub hint: Option<String>,
     pub kind: Kind,
     /// Ajouter un espace après l'insertion.
     pub append_space: bool,
@@ -264,6 +268,7 @@ impl Completer {
                     insert: name.clone(),
                     description: command.description.clone(),
                     kind: Kind::Command,
+                    hint: None,
                     append_space: true,
                 })
             })
@@ -294,6 +299,7 @@ impl Completer {
                     insert: format!("{insert_prefix}{insert}"),
                     description: v.description.clone().or_else(|| arg.description.clone()),
                     kind: Kind::Value,
+                    hint: None,
                 })
             })
             .collect();
@@ -323,6 +329,7 @@ impl Completer {
                     label: entry.name,
                     insert: format!("{insert_prefix}{}", line::escape(&entry.path)),
                     description: None,
+                    hint: None,
                     kind: if entry.is_dir {
                         Kind::Folder
                     } else {
@@ -360,6 +367,7 @@ fn push_subcommands(node: &Command, prefix: &str, out: &mut Vec<Suggestion>) {
                 label: name.clone(),
                 insert: s.insert.clone().unwrap_or_else(|| name.clone()),
                 description: s.description.clone(),
+                hint: args_hint(&s.args),
                 kind: Kind::Subcommand,
                 append_space: true,
             })
@@ -367,6 +375,24 @@ fn push_subcommands(node: &Command, prefix: &str, out: &mut Vec<Suggestion>) {
         .collect();
     sort(&mut found);
     out.extend(found);
+}
+
+/// Arguments d'une sous-commande ou d'une option, façon Fig :
+/// `<mode>` pour un argument obligatoire, `[pathspec...]` sinon.
+fn args_hint(args: &[Arg]) -> Option<String> {
+    let parts: Vec<String> = args
+        .iter()
+        .map(|arg| {
+            let name = arg.name.as_deref().unwrap_or("arg");
+            let dots = if arg.variadic { "..." } else { "" };
+            if arg.optional {
+                format!("[{name}{dots}]")
+            } else {
+                format!("<{name}{dots}>")
+            }
+        })
+        .collect();
+    (!parts.is_empty()).then(|| parts.join(" "))
 }
 
 fn push_options(node: &Command, persistent: &[&Opt], prefix: &str, out: &mut Vec<Suggestion>) {
@@ -389,6 +415,7 @@ fn push_options(node: &Command, persistent: &[&Opt], prefix: &str, out: &mut Vec
                 label: o.names.join(", "),
                 insert,
                 description: o.description.clone(),
+                hint: args_hint(&o.args),
                 kind: Kind::Option,
                 append_space: !takes_equals,
             })
@@ -433,7 +460,8 @@ fn push_generated(
             append_space: !insert.ends_with(['/', '=']),
             insert,
             description: item.description.clone(),
-            kind: Kind::Value,
+            hint: None,
+            kind: Kind::Dynamic,
             rank,
         });
     }

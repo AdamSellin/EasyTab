@@ -19,6 +19,14 @@ une liste de suggestions style IDE qui s'affiche pendant que tu tapes une comman
 
 Quand la liste est fermée, Tab garde son comportement habituel (complétion du shell).
 
+La liste ressemble à celle de Fig : une pastille colorée par type (`>` commande, `$` sous-commande,
+`-` option, `@` valeur calculée, `/` dossier…), les lettres tapées en gras, les arguments attendus
+en gris (`--cleanup <mode>`) et la description de la suggestion choisie en bas. Avec
+`EASYTAB_ICONS=emoji`, les pastilles deviennent des emoji (📦 🚩 🌿 📁…).
+
+Les suggestions sont classées par qualité de correspondance (début du nom, puis recherche floue :
+`git chk` trouve `checkout`), puis par fréquence d'utilisation, retenue dans `~/.easytab/usage.json`.
+
 Les suggestions dynamiques (branches, scripts…) viennent des *generators* des specs Fig : EasyTab
 lance la commande prévue par la spec (`git branch`, lecture de `package.json`…) en arrière-plan,
 passe sa sortie au JavaScript de la spec dans un moteur JS embarqué (QuickJS), puis complète la

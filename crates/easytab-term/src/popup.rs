@@ -13,12 +13,18 @@ const MAX_ROWS: usize = 8;
 /// Largeur maximale de la liste.
 const MAX_WIDTH: usize = 72;
 /// Largeur maximale de la colonne des noms.
-const MAX_LABEL_WIDTH: usize = 36;
+const MAX_LABEL_WIDTH: usize = 48;
 
-const STYLE: &str = "\x1b[0;38;5;252;48;5;237m";
-const STYLE_SELECTED: &str = "\x1b[0;1;38;5;231;48;5;25m";
-const STYLE_DESCRIPTION: &str = "\x1b[22;38;5;246m";
-const STYLE_DESCRIPTION_SELECTED: &str = "\x1b[22;38;5;153m";
+/// Largeur minimale du cadre.
+const MIN_WIDTH: usize = 24;
+
+const STYLE: &str = "\x1b[0;38;5;252;48;5;236m";
+const STYLE_SELECTED: &str = "\x1b[0;38;5;231;48;5;25m";
+const STYLE_MATCH: &str = "\x1b[1;38;5;231m";
+const STYLE_HINT: &str = "\x1b[22;38;5;244m";
+const STYLE_HINT_SELECTED: &str = "\x1b[22;38;5;153m";
+const STYLE_BORDER: &str = "\x1b[0;38;5;240;48;5;236m";
+const STYLE_FOOTER: &str = "\x1b[0;3;38;5;250;48;5;236m";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Key {
@@ -290,7 +296,10 @@ impl Popup {
         restore_cursor(screen, out);
     }
 
-    /// Dessine la liste près du curseur, s'il y a des suggestions et la place.
+    /// Dessine la liste près du curseur, s'il y a des suggestions et la place :
+    /// un cadre arrondi, une pastille colorée par type, la partie tapée en
+    /// gras, les arguments attendus en gris et, en bas, la description de la
+    /// suggestion choisie.
     pub fn draw(&mut self, screen: &vt100::Screen, out: &mut Vec<u8>) {
         let Some(completion) = &self.completion else {
             return;
@@ -298,7 +307,9 @@ impl Popup {
         let items = &completion.suggestions;
         let (screen_rows, cols) = screen.size();
         let (cursor_row, cursor_col) = screen.cursor_position();
-        let height = items.len().min(MAX_ROWS) as u16;
+        let visible = items.len().min(MAX_ROWS);
+        let footer = items.iter().any(|s| s.description.is_some());
+        let height = (visible + 2 + if footer { 2 } else { 0 }) as u16;
 
         let top = if cursor_row + 1 + height <= screen_rows {
             cursor_row + 1
@@ -310,85 +321,207 @@ impl Popup {
 
         if self.selected < self.scroll {
             self.scroll = self.selected;
-        } else if self.selected >= self.scroll + height as usize {
-            self.scroll = self.selected + 1 - height as usize;
+        } else if self.selected >= self.scroll + visible {
+            self.scroll = self.selected + 1 - visible;
         }
 
-        let label_width = items
+        // « │ ▣ label hint │ » : bordure, espace, pastille (3), espace, texte,
+        // espace, bordure.
+        const CHROME: usize = 8;
+        let text_width = items
             .iter()
-            .map(|s| s.label.width())
+            .map(|s| s.label.width() + s.hint.as_ref().map_or(0, |h| 1 + h.width()))
             .max()
             .unwrap_or(0)
             .min(MAX_LABEL_WIDTH);
         let description_width = items
             .iter()
             .filter_map(|s| s.description.as_deref())
-            .map(|d| d.width())
+            .map(|d| d.lines().next().unwrap_or("").width() + 4)
             .max()
-            .unwrap_or(0)
-            .min(MAX_WIDTH.saturating_sub(label_width + 6));
-        // " i label  description "
-        let mut width = 3 + label_width + 1;
-        if description_width > 0 {
-            width += 2 + description_width;
+            .unwrap_or(0);
+        let width = (text_width + CHROME)
+            .max(description_width.min(MAX_WIDTH))
+            .max(MIN_WIDTH)
+            .min(cols as usize);
+        if width < CHROME + 1 {
+            return;
         }
-        let width = width.min(cols as usize);
+        let inner = width - 2;
+        let text_width = width - CHROME;
+        // Les noms s'alignent sous le mot tapé.
         let word_width = completion.replace.width() as u16;
         let left = cursor_col
-            .saturating_sub(word_width + 3)
+            .saturating_sub(word_width + 6)
             .min((cols as usize - width) as u16);
+        let query = typed_part(&completion.replace);
+        let icons = icons();
 
         out.extend_from_slice(b"\x1b[?25l");
-        for (i, item) in items
-            .iter()
-            .enumerate()
-            .skip(self.scroll)
-            .take(height as usize)
-        {
+        let mut row = top;
+        let mut line = String::new();
+        let mut put = |out: &mut Vec<u8>, line: &mut String| {
+            goto(out, row, left);
+            out.extend_from_slice(line.as_bytes());
+            out.extend_from_slice(b"\x1b[0m");
+            line.clear();
+            row += 1;
+        };
+
+        border(&mut line, '╭', '╮', inner);
+        put(out, &mut line);
+        for (i, item) in items.iter().enumerate().skip(self.scroll).take(visible) {
             let selected = i == self.selected;
-            goto(out, top + (i - self.scroll) as u16, left);
-            let mut line = String::new();
-            line.push_str(if selected { STYLE_SELECTED } else { STYLE });
+            let base = if selected { STYLE_SELECTED } else { STYLE };
+            line.push_str(STYLE_BORDER);
+            line.push('│');
+            line.push_str(base);
             line.push(' ');
-            line.push(icon(item.kind));
+            line.push_str(&badge(item.kind, icons));
+            line.push_str(base);
             line.push(' ');
-            let label = fit(&item.label, label_width);
-            let mut used = 3 + label.width();
-            line.push_str(&label);
-            if description_width > 0 {
-                let available = width.saturating_sub(used + 3);
-                let description = fit(item.description.as_deref().unwrap_or(""), available);
-                if !description.is_empty() {
-                    let pad = label_width.saturating_sub(label.width()) + 2;
-                    if used + pad + description.width() < width {
-                        line.push_str(&" ".repeat(pad));
-                        line.push_str(if selected {
-                            STYLE_DESCRIPTION_SELECTED
-                        } else {
-                            STYLE_DESCRIPTION
-                        });
-                        line.push_str(&description);
-                        used += pad + description.width();
-                    }
+
+            let label = fit(&item.label, text_width);
+            let mut used = label.width();
+            push_highlighted(&mut line, &label, query, base);
+            if let Some(hint) = &item.hint {
+                let hint = fit(hint, text_width.saturating_sub(used + 1));
+                if !hint.is_empty() {
+                    line.push(' ');
+                    line.push_str(if selected {
+                        STYLE_HINT_SELECTED
+                    } else {
+                        STYLE_HINT
+                    });
+                    line.push_str(&hint);
+                    used += 1 + hint.width();
                 }
             }
-            line.push_str(&" ".repeat(width.saturating_sub(used)));
-            line.push_str("\x1b[0m");
-            out.extend_from_slice(line.as_bytes());
+            line.push_str(base);
+            line.push_str(&" ".repeat(text_width.saturating_sub(used) + 1));
+            line.push_str(STYLE_BORDER);
+            line.push('│');
+            put(out, &mut line);
         }
+        if footer {
+            border(&mut line, '├', '┤', inner);
+            put(out, &mut line);
+            let description = items
+                .get(self.selected)
+                .and_then(|s| s.description.as_deref())
+                .unwrap_or("");
+            let description = fit(description, inner - 2);
+            line.push_str(STYLE_BORDER);
+            line.push('│');
+            line.push_str(STYLE_FOOTER);
+            line.push(' ');
+            line.push_str(&description);
+            line.push_str(&" ".repeat(inner - 1 - description.width()));
+            line.push_str(STYLE_BORDER);
+            line.push('│');
+            put(out, &mut line);
+        }
+        border(&mut line, '╰', '╯', inner);
+        put(out, &mut line);
+
         restore_cursor(screen, out);
         self.drawn = Some(Area { top, rows: height });
     }
 }
 
-fn icon(kind: Kind) -> char {
-    match kind {
-        Kind::Command => '$',
-        Kind::Subcommand => '›',
-        Kind::Option => '-',
-        Kind::Value => '=',
-        Kind::Folder => '/',
-        Kind::File => '·',
+/// Ligne horizontale du cadre.
+fn border(line: &mut String, start: char, end: char, inner: usize) {
+    line.push_str(STYLE_BORDER);
+    line.push(start);
+    line.extend(std::iter::repeat_n('─', inner));
+    line.push(end);
+}
+
+/// Jeu de pastilles : symboles sur fond coloré, ou emoji avec
+/// `EASYTAB_ICONS=emoji`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Icons {
+    Badges,
+    Emoji,
+}
+
+fn icons() -> Icons {
+    static ICONS: std::sync::OnceLock<Icons> = std::sync::OnceLock::new();
+    *ICONS.get_or_init(|| match std::env::var("EASYTAB_ICONS").as_deref() {
+        Ok("emoji") => Icons::Emoji,
+        _ => Icons::Badges,
+    })
+}
+
+/// Pastille de 3 colonnes qui indique le type de suggestion.
+fn badge(kind: Kind, icons: Icons) -> String {
+    let (symbol, color, emoji) = match kind {
+        Kind::Command => ('>', 30, "🚀"),
+        Kind::Subcommand => ('$', 98, "📦"),
+        Kind::Option => ('-', 71, "🚩"),
+        Kind::Value => ('=', 172, "💡"),
+        Kind::Folder => ('/', 33, "📁"),
+        Kind::File => ('·', 243, "📄"),
+        Kind::Dynamic => ('@', 166, "🌿"),
+    };
+    match icons {
+        Icons::Badges => format!("\x1b[0;1;38;5;231;48;5;{color}m {symbol} "),
+        Icons::Emoji => format!("{emoji} "),
+    }
+}
+
+/// Partie du mot tapé comparée aux noms (après le dernier `/` ou `=`).
+fn typed_part(word: &str) -> &str {
+    word.rsplit(['/', '=']).next().unwrap_or(word)
+}
+
+/// Écrit `label` en mettant en gras les lettres tapées.
+fn push_highlighted(line: &mut String, label: &str, query: &str, base: &str) {
+    let marked = matched_chars(label, query);
+    let mut bold = false;
+    for (i, c) in label.chars().enumerate() {
+        let want = marked.contains(&i);
+        if want != bold {
+            line.push_str(if want { STYLE_MATCH } else { base });
+            bold = want;
+        }
+        line.push(c);
+    }
+    if bold {
+        line.push_str(base);
+    }
+}
+
+/// Positions (en caractères) des lettres de `query` dans `label` : le début
+/// d'un des noms (« -a, --all »), le passage qui contient le mot, ou les
+/// lettres trouvées une à une.
+fn matched_chars(label: &str, query: &str) -> Vec<usize> {
+    let label: Vec<char> = label.to_lowercase().chars().collect();
+    let query: Vec<char> = query.to_lowercase().chars().collect();
+    if query.is_empty() || query.len() > label.len() {
+        return Vec::new();
+    }
+    let starts = std::iter::once(0).chain((1..label.len()).filter(|&i| label[i - 1] == ' '));
+    for start in starts {
+        if label[start..].starts_with(&query) {
+            return (start..start + query.len()).collect();
+        }
+    }
+    if let Some(at) = label.windows(query.len()).position(|w| w == query) {
+        return (at..at + query.len()).collect();
+    }
+    let mut found = Vec::new();
+    let mut rest = query.iter().filter(|&&c| c != '-').peekable();
+    for (i, c) in label.iter().enumerate() {
+        if rest.peek() == Some(&c) {
+            found.push(i);
+            rest.next();
+        }
+    }
+    if rest.peek().is_none() {
+        found
+    } else {
+        Vec::new()
     }
 }
 
@@ -527,9 +660,17 @@ mod tests {
         popup.draw(session.screen(), &mut out);
         assert!(popup.is_shown());
         let text = String::from_utf8_lossy(&out);
-        assert!(text.contains("checkout"), "{text}");
-        // Ligne 2 de l'écran (sous le prompt), colonne du mot « ch » moins l'icône.
-        assert!(text.contains("\x1b[2;4H"), "{text}");
+        // Cadre à partir de la ligne 2 (sous le prompt), noms alignés sous « ch ».
+        assert!(
+            text.contains("\x1b[2;1H\x1b[0;38;5;240;48;5;236m╭"),
+            "{text}"
+        );
+        assert!(text.contains('╰'), "{text}");
+        // « ch » en gras dans « checkout ».
+        assert!(
+            text.contains(&format!("{STYLE_MATCH}ch{STYLE_SELECTED}eckout")),
+            "{text}"
+        );
 
         out.clear();
         popup.erase(session.screen(), &mut out);
@@ -550,6 +691,17 @@ mod tests {
         session.feed_output(b"e");
         popup.update(&session, &completer, Path::new("/"));
         assert!(popup.accept().is_some());
+    }
+
+    #[test]
+    fn highlights_typed_letters() {
+        assert_eq!(matched_chars("checkout", "ch"), vec![0, 1]);
+        assert_eq!(matched_chars("-a, --all", "--al"), vec![4, 5, 6, 7]);
+        assert_eq!(matched_chars("cherry-pick", "pick"), vec![7, 8, 9, 10]);
+        assert_eq!(matched_chars("checkout", "chk"), vec![0, 1, 4]);
+        assert!(matched_chars("checkout", "zz").is_empty());
+        assert_eq!(typed_part("src/ma"), "ma");
+        assert_eq!(typed_part("--cleanup=st"), "st");
     }
 
     #[test]
