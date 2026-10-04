@@ -40,9 +40,80 @@ impl Key {
             b"\t" => Some(Key::Accept),
             b"\r" => Some(Key::Enter),
             b"\x1b" => Some(Key::Dismiss),
+            _ => Self::parse_win32(data),
+        }
+    }
+
+    /// Vrai si `data` valide la ligne (Entrée), sous l'une ou l'autre forme.
+    pub fn submits(data: &[u8]) -> bool {
+        data.contains(&b'\r')
+            || win32_records(data)
+                .is_some_and(|records| records.iter().any(|r| r.down && r.vk == VK_RETURN))
+    }
+
+    /// Touche envoyée en « win32-input-mode » : la pseudo-console Windows le
+    /// demande au terminal (`ESC[?9001h`), qui envoie alors chaque touche sous
+    /// la forme `ESC[Vk;Sc;Uc;Kd;Cs;Rc_` (appui puis relâchement).
+    fn parse_win32(data: &[u8]) -> Option<Key> {
+        let records = win32_records(data)?;
+        let mut pressed = records.iter().filter(|r| r.down);
+        let record = pressed.next()?;
+        if pressed.next().is_some() || record.modifiers & MODIFIERS != 0 {
+            return None;
+        }
+        match record.vk {
+            VK_UP => Some(Key::Up),
+            VK_DOWN => Some(Key::Down),
+            VK_TAB => Some(Key::Accept),
+            VK_RETURN => Some(Key::Enter),
+            VK_ESCAPE => Some(Key::Dismiss),
             _ => None,
         }
     }
+}
+
+const VK_TAB: u32 = 9;
+const VK_RETURN: u32 = 13;
+const VK_ESCAPE: u32 = 27;
+const VK_UP: u32 = 38;
+const VK_DOWN: u32 = 40;
+/// Maj, Ctrl et Alt dans le champ `Cs` (états des touches de contrôle).
+const MODIFIERS: u32 = 0x1f;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Win32Record {
+    vk: u32,
+    down: bool,
+    modifiers: u32,
+}
+
+/// Découpe `data` en enregistrements win32-input-mode, si elle n'est faite que
+/// de ça.
+fn win32_records(data: &[u8]) -> Option<Vec<Win32Record>> {
+    let mut records = Vec::new();
+    let mut rest = data;
+    while !rest.is_empty() {
+        let body = rest.strip_prefix(b"\x1b[")?;
+        let end = body.iter().position(|&b| b == b'_')?;
+        let fields = std::str::from_utf8(&body[..end]).ok()?;
+        if !fields.bytes().all(|b| b.is_ascii_digit() || b == b';') {
+            return None;
+        }
+        // Champs absents : valeurs par défaut (0, sauf Rc = 1).
+        let mut values = fields.split(';').map(|f| f.parse::<u32>().unwrap_or(0));
+        let vk = values.next().unwrap_or(0);
+        let _scan_code = values.next();
+        let _unicode = values.next();
+        let down = values.next().unwrap_or(0) == 1;
+        let modifiers = values.next().unwrap_or(0);
+        records.push(Win32Record {
+            vk,
+            down,
+            modifiers,
+        });
+        rest = &body[end + 1..];
+    }
+    (!records.is_empty()).then_some(records)
 }
 
 /// Lignes de l'écran recouvertes par la liste.
@@ -360,6 +431,29 @@ mod tests {
         assert_eq!(Key::parse(b"\x1b"), Some(Key::Dismiss));
         assert_eq!(Key::parse(b"\r"), Some(Key::Enter));
         assert_eq!(Key::parse(b"a"), None);
+    }
+
+    #[test]
+    fn parses_win32_input_mode_keys() {
+        // Appui puis relâchement, collés dans la même lecture.
+        assert_eq!(
+            Key::parse(b"\x1b[13;28;13;1;0;1_\x1b[13;28;13;0;0;1_"),
+            Some(Key::Enter)
+        );
+        assert_eq!(Key::parse(b"\x1b[9;15;9;1;0;1_"), Some(Key::Accept));
+        assert_eq!(Key::parse(b"\x1b[27;1;27;1;0;1_"), Some(Key::Dismiss));
+        assert_eq!(Key::parse(b"\x1b[40;80;0;1;256;1_"), Some(Key::Down));
+        assert_eq!(Key::parse(b"\x1b[38;72;0;1;256;1_"), Some(Key::Up));
+        // Relâchement seul, Maj+Tab, lettre : pas pour la liste.
+        assert_eq!(Key::parse(b"\x1b[13;28;13;0;0;1_"), None);
+        assert_eq!(Key::parse(b"\x1b[9;15;9;1;16;1_"), None);
+        assert_eq!(Key::parse(b"\x1b[65;30;97;1;0;1_"), None);
+        assert_eq!(Key::parse(b"\x1b[1;5A"), None);
+
+        assert!(Key::submits(b"\x1b[13;28;13;1;0;1_"));
+        assert!(Key::submits(b"ls\r"));
+        assert!(!Key::submits(b"\x1b[13;28;13;0;0;1_"));
+        assert!(!Key::submits(b"\x1b[65;30;97;1;0;1_"));
     }
 
     #[test]
