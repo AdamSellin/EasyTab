@@ -16,7 +16,7 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use clap::Parser;
 use crossterm::terminal;
-use easytab_core::{Completer, Generators, Session};
+use easytab_core::{Completer, Generators, Session, Usage};
 use popup::{Key, Popup};
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 
@@ -109,12 +109,30 @@ fn run(args: Args) -> Result<i32> {
     let shared = Arc::new(Mutex::new(Shared {
         session: Session::new(rows, cols),
         popup: Popup::default(),
-        completer: Completer::builtin().with_generators(generators),
+        completer: Completer::builtin()
+            .with_generators(generators)
+            .with_usage(load_usage()),
         fallback_cwd,
     }));
     let mut log = open_log();
 
     let raw_mode = RawMode::enable()?;
+    // Le shell démarre là où se trouve le curseur, pas en haut de l'écran : la
+    // copie de l'écran doit le savoir, sinon la liste serait dessinée au mauvais
+    // endroit. On demande la position au terminal (`ESC[6n`) ; le fil clavier
+    // intercepte la réponse et la passe au fil écran, qui attend un court
+    // instant avant de relayer le shell. Sous Windows, la pseudo-console pose
+    // déjà cette question elle-même.
+    let (position_tx, position_rx) = mpsc::channel::<(u16, u16)>();
+    let mut position_tx = Some(position_tx);
+    let mut position_rx = Some(position_rx);
+    if cfg!(windows) {
+        position_tx = None;
+        position_rx = None;
+    } else {
+        let mut stdout = io::stdout().lock();
+        let _ = stdout.write_all(b"\x1b[6n").and_then(|_| stdout.flush());
+    }
 
     // Clavier -> shell.
     let input_shared = Arc::clone(&shared);
@@ -122,12 +140,30 @@ fn run(args: Args) -> Result<i32> {
         let mut stdin = io::stdin().lock();
         let mut buf = [0u8; 4096];
         while let Ok(n @ 1..) = stdin.read(&mut buf) {
-            let data = &buf[..n];
+            let mut data = buf[..n].to_vec();
+            if let Some((row, col, range)) = position_tx
+                .as_ref()
+                .and_then(|_| popup::cursor_report(&data))
+            {
+                if let Some(tx) = position_tx.take() {
+                    let _ = tx.send((row, col));
+                }
+                data.drain(range);
+                if data.is_empty() {
+                    continue;
+                }
+            }
+            let data = &data[..];
             let mut frame = Vec::new();
             let mut to_shell = data.to_vec();
             {
                 let mut shared = input_shared.lock().unwrap();
-                let Shared { session, popup, .. } = &mut *shared;
+                let Shared {
+                    session,
+                    popup,
+                    completer,
+                    ..
+                } = &mut *shared;
                 match Key::parse(data).filter(|&key| popup.handles(key)) {
                     Some(key) => {
                         popup.erase(session.screen(), &mut frame);
@@ -145,6 +181,9 @@ fn run(args: Args) -> Result<i32> {
                     None => {
                         // La commande part : la liste ne doit pas rester à l'écran.
                         if Key::submits(data) {
+                            if let Some(line) = session.current_input() {
+                                completer.record(&line);
+                            }
                             popup.erase(session.screen(), &mut frame);
                             session.feed_input(b"\r");
                         }
@@ -209,6 +248,16 @@ fn run(args: Args) -> Result<i32> {
         let mut buf = [0u8; 16 * 1024];
         let mut frame = Vec::new();
         let mut last_input = None;
+        if let Some(position) = position_rx.take() {
+            if let Ok((row, col)) = position.recv_timeout(Duration::from_millis(500)) {
+                let goto = format!("\x1b[{row};{col}H");
+                output_shared
+                    .lock()
+                    .unwrap()
+                    .session
+                    .feed_output(goto.as_bytes());
+            }
+        }
         while let Ok(n @ 1..) = reader.read(&mut buf) {
             let mut shared = output_shared.lock().unwrap();
             frame.clear();
@@ -310,6 +359,15 @@ fn default_shell() -> String {
         "powershell.exe".into()
     } else {
         "/bin/sh".into()
+    }
+}
+
+/// Historique d'utilisation (`~/.easytab/usage.json`), qui fait remonter les
+/// suggestions les plus utilisées.
+fn load_usage() -> Usage {
+    match dirs::home_dir() {
+        Some(home) => Usage::load(&home.join(".easytab").join("usage.json")),
+        None => Usage::default(),
     }
 }
 

@@ -39,15 +39,18 @@ enum Command {
 enum Shell {
     Zsh,
     Bash,
+    /// PowerShell 7 (`pwsh`) et Windows PowerShell 5.
+    Pwsh,
 }
 
 impl Shell {
-    const ALL: [Shell; 2] = [Shell::Zsh, Shell::Bash];
+    const ALL: [Shell; 3] = [Shell::Zsh, Shell::Bash, Shell::Pwsh];
 
     fn name(self) -> &'static str {
         match self {
             Shell::Zsh => "zsh",
             Shell::Bash => "bash",
+            Shell::Pwsh => "pwsh",
         }
     }
 
@@ -55,17 +58,47 @@ impl Shell {
         match self {
             Shell::Zsh => include_str!("../../../shell-integration/easytab.zsh"),
             Shell::Bash => include_str!("../../../shell-integration/easytab.bash"),
+            Shell::Pwsh => include_str!("../../../shell-integration/easytab.ps1"),
         }
     }
 
-    fn rc_file(self) -> Result<PathBuf> {
+    fn quote(self, value: &str) -> String {
+        match self {
+            Shell::Pwsh => rc::powershell_quote(value),
+            _ => rc::shell_quote(value),
+        }
+    }
+
+    /// Ligne ajoutée au fichier de config pour charger l'intégration.
+    fn load_line(self, exe: &Path) -> String {
+        let exe = self.quote(&exe.to_string_lossy());
+        match self {
+            Shell::Pwsh => format!("Invoke-Expression (& {exe} init pwsh | Out-String)"),
+            _ => format!("eval \"$({exe} init {})\"", self.name()),
+        }
+    }
+
+    /// Fichiers de config du shell. PowerShell : profils de PowerShell 7 et de
+    /// Windows PowerShell (le dossier Documents peut être dans OneDrive).
+    fn rc_files(self) -> Result<Vec<PathBuf>> {
         let home = dirs::home_dir().context("dossier personnel introuvable")?;
         Ok(match self {
-            Shell::Zsh => std::env::var_os("ZDOTDIR")
+            Shell::Zsh => vec![std::env::var_os("ZDOTDIR")
                 .map(PathBuf::from)
                 .unwrap_or(home)
-                .join(".zshrc"),
-            Shell::Bash => home.join(".bashrc"),
+                .join(".zshrc")],
+            Shell::Bash => vec![home.join(".bashrc")],
+            Shell::Pwsh if cfg!(windows) => {
+                let documents = dirs::document_dir().unwrap_or_else(|| home.join("Documents"));
+                ["PowerShell", "WindowsPowerShell"]
+                    .iter()
+                    .map(|dir| documents.join(dir).join("Microsoft.PowerShell_profile.ps1"))
+                    .collect()
+            }
+            Shell::Pwsh => vec![home
+                .join(".config")
+                .join("powershell")
+                .join("Microsoft.PowerShell_profile.ps1")],
         })
     }
 
@@ -78,7 +111,9 @@ impl Shell {
         match Shell::ALL.into_iter().find(|s| s.name() == name) {
             Some(shell) => Ok(shell),
             None => {
-                bail!("shell non pris en charge ({shell:?}) ; précise --shell zsh ou --shell bash")
+                bail!(
+                    "shell non pris en charge ({shell:?}) ; précise --shell zsh, --shell bash ou --shell pwsh"
+                )
             }
         }
     }
@@ -95,27 +130,30 @@ fn main() -> Result<()> {
 }
 
 fn init_script(shell: Shell) -> Result<String> {
-    let term = rc::shell_quote(&term_binary().to_string_lossy());
+    let term = shell.quote(&term_binary().to_string_lossy());
     Ok(shell.script().replace("__EASYTAB_TERM_BIN__", &term))
 }
 
 fn install(shell: Shell) -> Result<()> {
     let exe = copy_binaries()?;
-    let line = format!(
-        "eval \"$({} init {})\"",
-        rc::shell_quote(&exe.to_string_lossy()),
-        shell.name()
-    );
-    let path = shell.rc_file()?;
-    let content = read_or_empty(&path)?;
-    let updated = rc::has_block(&content);
-    // Réinstaller remplace les anciens blocs par ceux de cette version.
-    fs::write(&path, rc::add_blocks(&rc::remove_blocks(&content), &line))
-        .with_context(|| format!("écriture de {}", path.display()))?;
+    let line = shell.load_line(&exe);
+    for path in shell.rc_files()? {
+        let content = read_or_empty(&path)?;
+        let updated = rc::has_block(&content);
+        // Réinstaller remplace les anciens blocs par ceux de cette version.
+        write_config(
+            shell,
+            &path,
+            &rc::add_blocks(&rc::remove_blocks(&content), &line),
+        )?;
+        println!(
+            "EasyTab est {} dans {}",
+            if updated { "mis à jour" } else { "installé" },
+            path.display()
+        );
+    }
     println!(
-        "EasyTab est {} dans {} (programmes dans {}). Ouvre un nouveau terminal pour l'activer.",
-        if updated { "mis à jour" } else { "installé" },
-        path.display(),
+        "Programmes dans {}. Ouvre un nouveau terminal pour activer EasyTab.",
         exe.parent().unwrap_or(&exe).display()
     );
     Ok(())
@@ -186,20 +224,26 @@ fn remove_old_copies(dir: &Path) {
 }
 
 fn uninstall(shell: Shell) -> Result<()> {
-    let path = shell.rc_file()?;
-    let content = read_or_empty(&path)?;
-    if !rc::has_block(&content) {
-        println!("EasyTab n'est pas installé dans {}", path.display());
-        return Ok(());
+    for path in shell.rc_files()? {
+        let content = read_or_empty(&path)?;
+        if !rc::has_block(&content) {
+            println!("EasyTab n'est pas installé dans {}", path.display());
+            continue;
+        }
+        write_config(shell, &path, &rc::remove_blocks(&content))?;
+        println!("EasyTab est retiré de {}", path.display());
     }
-    fs::write(&path, rc::remove_blocks(&content))
-        .with_context(|| format!("écriture de {}", path.display()))?;
-    println!("EasyTab est retiré de {}", path.display());
     Ok(())
 }
 
 fn doctor() -> Result<()> {
-    let term = term_binary();
+    // La copie installée est celle que lance le shell, pas celle d'à côté.
+    let name = format!("easytab-term{}", std::env::consts::EXE_SUFFIX);
+    let term = install_dir()
+        .map(|dir| dir.join(&name))
+        .ok()
+        .filter(|path| path.is_file())
+        .unwrap_or_else(term_binary);
     let term_found = term.is_file() || which(&term).is_some();
     println!(
         "{} wrapper easytab-term : {}",
@@ -207,16 +251,20 @@ fn doctor() -> Result<()> {
         term.display()
     );
     for shell in Shell::ALL {
-        let path = shell.rc_file()?;
-        let installed = rc::has_block(&read_or_empty(&path)?);
+        let mut installed_in = Vec::new();
+        for path in shell.rc_files()? {
+            if rc::has_block(&read_or_empty(&path)?) {
+                installed_in.push(path.display().to_string());
+            }
+        }
         println!(
             "{} {} : {}",
-            mark(installed),
+            mark(!installed_in.is_empty()),
             shell.name(),
-            if installed {
-                format!("installé dans {}", path.display())
-            } else {
+            if installed_in.is_empty() {
                 format!("non installé (easytab install --shell {})", shell.name())
+            } else {
+                format!("installé dans {}", installed_in.join(", "))
             }
         );
     }
@@ -247,10 +295,24 @@ fn which(name: &Path) -> Option<PathBuf> {
 
 fn read_or_empty(path: &Path) -> Result<String> {
     match fs::read_to_string(path) {
-        Ok(content) => Ok(content),
+        // Les profils PowerShell commencent souvent par un BOM UTF-8.
+        Ok(content) => Ok(content.trim_start_matches('\u{feff}').to_string()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
         Err(e) => Err(e).with_context(|| format!("lecture de {}", path.display())),
     }
+}
+
+/// Écrit un fichier de config. Les profils PowerShell gardent un BOM UTF-8 :
+/// sans lui, Windows PowerShell 5 les lit comme de l'ANSI.
+fn write_config(shell: Shell, path: &Path, content: &str) -> Result<()> {
+    if let Some(dir) = path.parent() {
+        fs::create_dir_all(dir).with_context(|| format!("création de {}", dir.display()))?;
+    }
+    let content = match shell {
+        Shell::Pwsh if !content.is_empty() => format!("\u{feff}{content}"),
+        _ => content.to_string(),
+    };
+    fs::write(path, content).with_context(|| format!("écriture de {}", path.display()))
 }
 
 fn mark(ok: bool) -> &'static str {
