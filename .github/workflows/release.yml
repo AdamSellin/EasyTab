@@ -1,15 +1,23 @@
 name: Release
 
-# Publie une version quand un tag `v*` est poussé (ex. `git tag v0.2.0 && git push origin v0.2.0`).
+# Publie une version quand un tag `v*` est poussé (ex. `git tag v0.2.0 && git push origin v0.2.0`),
+# ou à la main depuis l'onglet Actions avec le nom de la version : le tag est
+# alors créé sur le commit choisi.
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Version à publier (ex. v0.2.0)"
+        required: true
 
 permissions:
   contents: write
 
 env:
   CARGO_TERM_COLOR: always
+  TAG: ${{ inputs.tag || github.ref_name }}
 
 jobs:
   build:
@@ -65,5 +73,5 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" dist/* scripts/install.sh scripts/install.ps1 \
-            --title "EasyTab $GITHUB_REF_NAME" --generate-notes
+          gh release create "$TAG" dist/* scripts/install.sh scripts/install.ps1 \
+            --target "$GITHUB_SHA" --title "EasyTab $TAG" --generate-notes
