@@ -33,6 +33,9 @@ pub struct Item {
     pub names: Vec<String>,
     pub insert: Option<String>,
     pub description: Option<String>,
+    /// Icône Fig (`fig://icon?type=git` donne `git`).
+    #[serde(default)]
+    pub icon: Option<String>,
     pub priority: i64,
 }
 

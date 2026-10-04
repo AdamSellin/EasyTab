@@ -26,6 +26,12 @@ globalThis.Intl ??= {
   },
 };
 
+// `fig://icon?type=git` -> `git` ; les emoji et images sont ignorés.
+const iconName = (icon) => {
+  const match = typeof icon === "string" && /^fig:\/\/icon\?type=([\w-]+)/.exec(icon);
+  return match ? match[1] : undefined;
+};
+
 globalThis.__easytab_run = async (module, path, tokens, cwd, env) => {
   let generator = __easytab_modules[module];
   for (const key of JSON.parse(path)) generator = generator[key];
@@ -79,6 +85,7 @@ globalThis.__easytab_run = async (module, path, tokens, cwd, env) => {
         typeof suggestion.description === "string" && suggestion.description.length > 0
           ? suggestion.description
           : undefined,
+      icon: iconName(suggestion.icon),
       priority: typeof suggestion.priority === "number" ? suggestion.priority : 50,
     });
   }

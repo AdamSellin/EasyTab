@@ -1,0 +1,153 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  :root {
+    --bg: #1e1f22;
+    --border: rgba(255, 255, 255, 0.09);
+    --text: #d6d7da;
+    --strong: #ffffff;
+    --hint: #7f838b;
+    --selected: #2463d1;
+    --selected-hint: #b9cdf3;
+    --footer: #9a9ea6;
+    --mono: "Cascadia Code", "Cascadia Mono", "SF Mono", Menlo, Consolas, monospace;
+    --sans: "Segoe UI Variable Text", "Segoe UI", -apple-system, system-ui, sans-serif;
+  }
+  html, body {
+    margin: 0;
+    background: transparent;
+    overflow: hidden;
+    user-select: none;
+    cursor: default;
+  }
+  /* Marge transparente autour du cadre, pour l'ombre. */
+  #frame { display: inline-block; padding: 6px 14px 18px 14px; }
+  .box {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    box-shadow: 0 10px 28px rgba(0, 0, 0, 0.5), 0 2px 6px rgba(0, 0, 0, 0.35);
+    min-width: 260px;
+    max-width: 560px;
+    overflow: hidden;
+  }
+  .rows { padding: 4px; }
+  .row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: 24px;
+    padding: 0 8px 0 5px;
+    border-radius: 5px;
+    font: 13px/24px var(--mono);
+    color: var(--text);
+    white-space: nowrap;
+  }
+  .row.selected { background: var(--selected); color: #eef3ff; }
+  .icon { flex: none; width: 16px; height: 16px; display: block; }
+  .text { overflow: hidden; text-overflow: ellipsis; }
+  .label b { color: var(--strong); font-weight: 700; }
+  .hint { color: var(--hint); margin-left: 6px; }
+  .row.selected .hint { color: var(--selected-hint); }
+  .more {
+    margin-left: auto;
+    padding-left: 12px;
+    color: var(--hint);
+    font: 11px var(--sans);
+  }
+  .footer {
+    border-top: 1px solid var(--border);
+    padding: 6px 10px 7px 10px;
+    color: var(--footer);
+    font: italic 12px/16px var(--sans);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 540px;
+  }
+</style>
+</head>
+<body>
+<div id="frame"></div>
+<script>
+  // Icônes : pastille colorée et pictogramme blanc, comme dans Fig.
+  const glyphs = {
+    command: '<path d="M4.5 5.5 7 8l-2.5 2.5M8.5 10.5h3" stroke="#fff" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>',
+    subcommand: '<path d="M5 4.5h6M5 8h6M5 11.5h4" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/>',
+    option: '<path d="M5.5 12V4.5M5.5 4.8h5l-1.2 1.9 1.2 1.9h-5" stroke="#fff" stroke-width="1.4" fill="none" stroke-linejoin="round" stroke-linecap="round"/>',
+    value: '<circle cx="8" cy="8" r="2.4" fill="#fff"/>',
+    dynamic: '<path d="M8 3.5 9.2 6.8 12.5 8 9.2 9.2 8 12.5 6.8 9.2 3.5 8l3.3-1.2Z" fill="#fff"/>',
+    git: '<circle cx="5.5" cy="4.5" r="1.4" fill="#fff"/><circle cx="5.5" cy="11.5" r="1.4" fill="#fff"/><circle cx="10.5" cy="6" r="1.4" fill="#fff"/><path d="M5.5 5.9v4.2M10.5 7.4c0 2-5 1.4-5 3" stroke="#fff" stroke-width="1.3" fill="none"/>',
+    npm: '<path d="M4 5h8v6H9V7H8v4H4Z" fill="#fff"/>',
+    package: '<path d="M8 3.5 12 5.5v5L8 12.5 4 10.5v-5Z M4 5.5l4 2 4-2M8 7.5v5" stroke="#fff" stroke-width="1.2" fill="none" stroke-linejoin="round"/>',
+    docker: '<path d="M3.5 8.5h9c-.4 2.3-2.3 3.5-4.8 3.5-2.4 0-3.8-1.4-4.2-3.5ZM5 6.3h1.5v1.5H5Zm2 0h1.5v1.5H7Zm2 0h1.5v1.5H9ZM7 4.3h1.5v1.5H7Z" fill="#fff"/>',
+    node: '<path d="M8 3.3 12 5.6v4.8L8 12.7 4 10.4V5.6Z" stroke="#fff" stroke-width="1.3" fill="none" stroke-linejoin="round"/>',
+    kubernetes: '<circle cx="8" cy="8" r="4" stroke="#fff" stroke-width="1.3" fill="none"/><path d="M8 4v8M4.5 6l7 4M11.5 6l-7 4" stroke="#fff" stroke-width="1"/>',
+  };
+  const colors = {
+    command: "#16a085", subcommand: "#8e5bd8", option: "#3fa35a", value: "#d98a1c",
+    dynamic: "#d9622b", git: "#f05033", npm: "#cb3837", yarn: "#2c8ebb", package: "#a0753f",
+    docker: "#2496ed", node: "#539e43", kubernetes: "#326ce5",
+  };
+  const aliases = { yarn: "package", commandkey: "command", command: "command", string: "value",
+    gear: "subcommand", asterisk: "dynamic", folder: "folder", file: "file" };
+
+  function iconSvg(row) {
+    let key = row.icon && (glyphs[row.icon] || colors[row.icon] || aliases[row.icon]) ? row.icon : row.kind;
+    key = aliases[key] && !glyphs[key] ? aliases[key] : key;
+    if (key === "folder") {
+      return '<svg class="icon" viewBox="0 0 16 16"><path d="M1.5 4.2c0-.7.5-1.2 1.2-1.2h3.4l1.4 1.6h5.8c.7 0 1.2.5 1.2 1.2v6.3c0 .7-.5 1.2-1.2 1.2H2.7c-.7 0-1.2-.5-1.2-1.2Z" fill="#5aa3f0"/><path d="M1.5 6.2h13v5.7c0 .7-.5 1.2-1.2 1.2H2.7c-.7 0-1.2-.5-1.2-1.2Z" fill="#7cb8f7"/></svg>';
+    }
+    if (key === "file") {
+      return '<svg class="icon" viewBox="0 0 16 16"><path d="M3.5 1.5h6l3 3v10h-9Z" fill="#c9ced6"/><path d="M9.5 1.5v3h3" fill="#9aa1ab"/><path d="M5.5 8h5M5.5 10h5M5.5 12h3" stroke="#7d848e" stroke-width=".9"/></svg>';
+    }
+    const color = colors[row.icon] || colors[key] || colors.dynamic;
+    const glyph = glyphs[key] || glyphs[row.kind] || glyphs.dynamic;
+    return `<svg class="icon" viewBox="0 0 16 16"><rect width="16" height="16" rx="4" fill="${color}"/>${glyph}</svg>`;
+  }
+
+  function escape(text) {
+    return text.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+  }
+
+  function labelHtml(label, matched) {
+    const marks = new Set(matched);
+    let html = "", bold = false;
+    [...label].forEach((c, i) => {
+      const want = marks.has(i);
+      if (want !== bold) { html += want ? "<b>" : "</b>"; bold = want; }
+      html += escape(c);
+    });
+    return bold ? html + "</b>" : html;
+  }
+
+  // Appelée par Rust à chaque mise à jour ; renvoie la taille de la fenêtre et
+  // la position horizontale des noms, pour les aligner sous le mot tapé.
+  window.render = (view) => {
+    const rows = view.rows.map((row, i) => {
+      const hint = row.hint ? `<span class="hint">${escape(row.hint)}</span>` : "";
+      return `<div class="row${i === view.selected ? " selected" : ""}">${iconSvg(row)}` +
+        `<span class="text"><span class="label">${labelHtml(row.label, row.matched)}</span>${hint}</span></div>`;
+    });
+    const footer = view.description ? `<div class="footer">${escape(view.description)}</div>` : "";
+    document.getElementById("frame").innerHTML =
+      `<div class="box"><div class="rows">${rows.join("")}</div>${footer}</div>`;
+    const frame = document.getElementById("frame").getBoundingClientRect();
+    const label = document.querySelector(".label");
+    const box = document.querySelector(".box").getBoundingClientRect();
+    const size = {
+      width: Math.ceil(frame.width),
+      height: Math.ceil(frame.height),
+      label_x: label ? label.getBoundingClientRect().left : 0,
+      box_top: box.top,
+      box_bottom: box.bottom,
+    };
+    if (window.ipc) window.ipc.postMessage(JSON.stringify(size));
+    return size;
+  };
+  if (window.ipc) window.ipc.postMessage('"ready"');
+</script>
+</body>
+</html>

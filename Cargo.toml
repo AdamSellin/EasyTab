@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/easytab-core", "crates/easytab-term", "crates/easytab-cli"]
+members = ["crates/easytab-core", "crates/easytab-term", "crates/easytab-cli", "crates/easytab-overlay"]
 
 [workspace.package]
 version = "0.1.0"
