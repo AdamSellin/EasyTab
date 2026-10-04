@@ -64,10 +64,23 @@ curl -fsSL https://github.com/AdamSellin/EasyTab/releases/latest/download/instal
 irm https://github.com/AdamSellin/EasyTab/releases/latest/download/install.ps1 | iex
 ```
 
+Tant que le dépôt est privé, ces liens répondent 404 sans connexion à GitHub. Lance alors le
+script depuis un clone du dépôt : il télécharge la version publiée avec les identifiants GitHub
+que git utilise déjà (ou `GITHUB_TOKEN`, ou GitHub CLI).
+
+```sh
+sh scripts/install.sh          # Linux, macOS
+```
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\install.ps1   # Windows
+```
+
 Le script copie `easytab` et `easytab-term` dans `~/.easytab/bin` et ajoute EasyTab à la config
 du shell. Relancer la même commande met à jour. Ouvre ensuite un nouveau terminal.
 
-Publier une version : `git tag v0.2.0 && git push origin v0.2.0`. Le workflow `Release`
+Publier une version : `git tag v0.2.0 && git push origin v0.2.0`, ou « Run workflow » sur le
+workflow `Release` dans l'onglet Actions, avec le nom de la version. Le workflow `Release`
 compile pour Linux, macOS (Intel et Apple Silicon) et Windows, puis publie les archives et les
 scripts d'installation.
 
