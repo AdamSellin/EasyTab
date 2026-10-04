@@ -1,0 +1,16 @@
+[package]
+name = "easytab-cli"
+description = "Commande easytab : installation, désinstallation et diagnostic"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "easytab"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+dirs.workspace = true
