@@ -176,9 +176,11 @@ fn integration(file: &str) -> String {
 /// sans rien insérer.
 fn completes_git_checkout(term: &mut Terminal) {
     term.send(b"git checko");
-    // La description de `checkout` s'affiche sous la liste.
+    // La description de `checkout` s'affiche sous la liste. Le shell doit
+    // aussi avoir tout affiché : PowerShell peut n'avoir montré que `git c`,
+    // dont la liste décrit déjà `checkout`.
     term.wait_for("la liste avec checkout", |t| {
-        t.screen().contains("Switch branches")
+        t.screen().contains("Switch branches") && t.cursor_line().ends_with("git checko")
     });
     term.send(b"\t");
     term.wait_for("la ligne git checkout", |t| {
