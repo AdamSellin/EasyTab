@@ -19,9 +19,12 @@ cargo test
 - Installer en local : `cargo build --release`, puis `target/release/easytab install` (ajouter
   `--shell pwsh` pour PowerShell). Fermer les terminaux ouverts : ils gardent l'ancien
   `easytab-term`.
-- La fenêtre flottante (`crates/easytab-overlay`) ne compile que sous Windows. Depuis Linux :
-  `cargo clippy -p easytab-overlay --target x86_64-pc-windows-gnu`. `easytab-term` ne se
-  compile pas ainsi (QuickJS demande un gcc MinGW).
+- La fenêtre flottante (`crates/easytab-overlay`) demande sous Linux WebKitGTK
+  (`apt install libwebkit2gtk-4.1-dev libgtk-3-dev`). Vérifier les autres systèmes depuis Linux :
+  `cargo clippy -p easytab-overlay --target x86_64-pc-windows-gnu` et, après
+  `rustup target add aarch64-apple-darwin`,
+  `CC_aarch64_apple_darwin=clang cargo clippy -p easytab-overlay --target aarch64-apple-darwin`.
+  `easytab-term` ne se compile pas ainsi (QuickJS demande un gcc MinGW).
 - Publier une version : « Run workflow » sur `Release` dans l'onglet Actions, avec le nom de la
   version (`v0.1.1`), ou pousser un tag `v*`.
 
@@ -51,15 +54,21 @@ cargo test
 - Git Bash lancé par un programme Windows doit être un shell de connexion (`-l`) pour avoir
   `/usr/bin` dans le PATH.
 
-## Fenêtre flottante (Windows)
+## Fenêtre flottante
 
-- `easytab-term` lance `easytab-overlay.exe` et lui envoie la liste en JSON (protocole dans
+- `easytab-term` lance `easytab-overlay` et lui envoie la liste en JSON (protocole dans
   `crates/easytab-core/src/overlay.rs`). Si elle ne trouve pas le curseur, la liste est dessinée
   dans le terminal. `EASYTAB_OVERLAY=0` la désactive.
-- Position du curseur (`caret.rs`) : d'abord la zone de saisie de VS Code (élément qui a le
-  focus, de la taille d'une case), puis le curseur de texte UI Automation (Windows Terminal),
-  puis le curseur système. Le curseur système de VS Code reste en début de ligne : ne pas le
-  lire en premier.
+- Code commun dans `app.rs` (fenêtre tao, page wry), `placement.rs`, `estimate.rs` ; par système
+  dans `platform/` (`win`, `macos`, `linux`) : curseur, écran, fenêtre au premier plan.
+- macOS : curseur par l'accessibilité (`AXBoundsForRange`) si l'autorisation est donnée, sinon
+  déduit du cadre de la fenêtre et de la taille du terminal (`term_cols`, `term_rows`).
+  Coordonnées en points. Linux : X11 seulement (`_NET_ACTIVE_WINDOW`), position déduite de la
+  même façon ; pas lancée d'office sous Wayland.
 - `placement::Tracker` ignore les petits écarts et les lectures en retard d'une lettre (sinon la
   fenêtre tremble). Le bord gauche du cadre est aligné sur le début du mot, comme Fig.
 - Diagnostic : `EASYTAB_OVERLAY_LOG=fichier` journalise chaque lecture du curseur.
+- Windows, position du curseur (`platform/win/caret.rs`) : d'abord la zone de saisie de VS Code
+  (élément qui a le focus, de la taille d'une case), puis le curseur de texte UI Automation
+  (Windows Terminal), puis le curseur système. Le curseur système de VS Code reste en début de
+  ligne : ne pas le lire en premier.
