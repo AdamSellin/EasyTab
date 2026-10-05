@@ -23,7 +23,7 @@ options, branches git, scripts npm, fichiers… avec leur description. Tu choisi
   clavier.
 
 <p align="center">
-  <img src="docs/images/demo.gif" alt="Installation, puis git checkout et npm run complétés avec la liste" width="720">
+  <img src="docs/images/demo.gif" alt="git checkout, une branche, npm run dev et cd src/ complétés avec la liste" width="720">
 </p>
 
 ## Installer
