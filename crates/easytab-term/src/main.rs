@@ -17,7 +17,7 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use clap::Parser;
 use crossterm::terminal;
-use easytab_core::{Completer, Config, Generators, Session, Usage};
+use easytab_core::{Completer, Config, Generators, PowerShell, Session, Usage};
 use overlay::Overlay;
 use popup::{Key, Popup};
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
@@ -151,6 +151,12 @@ fn run(args: Args) -> Result<i32> {
     let mut writer = pair.master.take_writer()?;
     let master = pair.master;
     let (generated, generated_rx) = mpsc::channel();
+    let powershell = is_powershell(&shell).then(|| {
+        let generated = Mutex::new(generated.clone());
+        PowerShell::start(&shell, move || {
+            let _ = generated.lock().unwrap().send(());
+        })
+    });
     let generators = Generators::start(move || {
         let _ = generated.send(());
     });
@@ -164,9 +170,15 @@ fn run(args: Args) -> Result<i32> {
     let shared = Arc::new(Mutex::new(Shared {
         session: Session::new(rows, cols),
         popup: Popup::new(config),
-        completer: Completer::builtin()
-            .with_generators(generators)
-            .with_usage(load_usage()),
+        completer: {
+            let completer = Completer::builtin()
+                .with_generators(generators)
+                .with_usage(load_usage());
+            match powershell {
+                Some(powershell) => completer.with_powershell(powershell),
+                None => completer,
+            }
+        },
         overlay,
         focused: true,
         app_wants_focus: false,
@@ -472,6 +484,15 @@ fn pty_size(rows: u16, cols: u16) -> PtySize {
         pixel_width: 0,
         pixel_height: 0,
     }
+}
+
+/// `pwsh`, `powershell.exe`, `C:\\…\\pwsh.exe`…
+fn is_powershell(shell: &str) -> bool {
+    let name = Path::new(shell)
+        .file_stem()
+        .map(|stem| stem.to_string_lossy().to_ascii_lowercase())
+        .unwrap_or_default();
+    name == "pwsh" || name == "powershell"
 }
 
 fn default_shell() -> String {
