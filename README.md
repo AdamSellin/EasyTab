@@ -106,8 +106,9 @@ scripts d'installation.
 
 Prérequis : [Rust](https://rustup.rs) stable. Shells pris en charge : zsh, bash et PowerShell
 (`easytab install --shell pwsh`, PowerShell 7 et Windows PowerShell 5), et Git Bash sous Windows,
-dans Windows Terminal ou le terminal de VS Code. La fenêtre
-« Git Bash » par défaut (mintty) n'est pas encore prise en charge : le shell s'y lance sans EasyTab, avec un message.
+dans Windows Terminal ou le terminal de VS Code. Dans la fenêtre « Git Bash » par défaut (mintty),
+qui ne fournit pas de console aux programmes Windows, EasyTab passe par `winpty`, livré avec Git
+for Windows ; sans lui, le shell s'y lance sans EasyTab, avec un message.
 Sous Windows, utilise le toolchain Rust MSVC (`rustup default stable-msvc`).
 
 ```sh

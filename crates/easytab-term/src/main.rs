@@ -422,9 +422,10 @@ fn terminal_supported() -> bool {
     if !stdin_is_console() {
         // mintty (fenêtre « Git Bash » par défaut) ne donne qu'un tuyau aux
         // programmes Windows : la frappe n'arrive qu'à l'appui sur Entrée.
+        // L'intégration bash passe par winpty quand il est là.
         eprintln!(
             "easytab : ce terminal ne fournit pas de console Windows, les suggestions sont \
-             désactivées. Ouvre Git Bash dans Windows Terminal ou VS Code pour les avoir."
+             désactivées. Installe winpty, ou ouvre Git Bash dans Windows Terminal ou VS Code."
         );
         return false;
     }

@@ -10,6 +10,11 @@ if [[ -z "$EASYTAB_TERM" && -z "$EASYTAB_DISABLE" && $- == *i* && -t 0 && -t 1 ]
   if [[ -n "$MSYSTEM" ]]; then
     # Git Bash : lancé par un programme Windows, bash doit être un shell de
     # connexion pour que /etc/profile remette /usr/bin dans le PATH.
+    if [[ "$TERM_PROGRAM" == mintty ]] && command -v winpty >/dev/null 2>&1; then
+      # mintty ne donne pas de console aux programmes Windows : winpty (livré
+      # avec Git for Windows) leur en fournit une.
+      exec winpty __EASYTAB_TERM_BIN__ --shell "${BASH:-bash}" -- -l
+    fi
     exec __EASYTAB_TERM_BIN__ --shell "${BASH:-bash}" -- -l
   fi
   exec __EASYTAB_TERM_BIN__ --shell "${BASH:-bash}"
