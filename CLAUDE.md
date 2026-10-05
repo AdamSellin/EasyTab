@@ -45,8 +45,9 @@ cargo test
   `crates/easytab-term/src/popup.rs`.
 - Entrée dans la liste n'insère que si l'on s'est déplacé avec ↑/↓ ; sinon elle lance la
   commande. Tab insère toujours.
-- mintty (fenêtre « Git Bash » par défaut) ne fournit pas de console : EasyTab s'y désactive.
-  Utiliser Windows Terminal ou VS Code.
+- mintty (fenêtre « Git Bash » par défaut) ne fournit pas de console : l'intégration bash y lance
+  `easytab-term` sous `winpty` (détecté par `TERM_PROGRAM=mintty`). Sans winpty, EasyTab s'y
+  désactive. Le test de bout en bout ne couvre pas ce cas : tester à la main.
 - Git Bash lancé par un programme Windows doit être un shell de connexion (`-l`) pour avoir
   `/usr/bin` dans le PATH.
 
