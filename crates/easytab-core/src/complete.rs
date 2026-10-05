@@ -13,7 +13,7 @@ use crate::history::History;
 use crate::line::{self, Token};
 use crate::project;
 use crate::pwsh::PowerShell;
-use crate::rank::{self, best_match, Usage};
+use crate::rank::{self, best_match, Usage, LOOSE_RANK};
 use crate::spec::{self, Arg, Command, Generator, Opt, Spec, Template};
 
 /// Nombre maximum de suggestions renvoyées.
@@ -236,6 +236,7 @@ impl Completer {
         };
         self.complete_words(&line.words, &line.current, &mut context, &mut out);
         self.rank(&context.tokens, &mut out);
+        drop_loose_matches(&mut out);
         // Les commandes déjà tapées passent devant, comme dans Fig.
         let typed = input
             .strip_suffix(line.current.raw.as_str())
@@ -783,6 +784,16 @@ fn sort(found: &mut [Suggestion]) {
     found.sort_by(|a, b| a.label.cmp(&b.label));
 }
 
+/// Écarte les correspondances floues (lettres dans l'ordre, rang 3) quand
+/// d'autres suggestions commencent par le mot tapé ou le contiennent : `git che`
+/// propose `checkout` et `cherry-pick`, pas `credential-helper-selector`.
+/// Sans meilleure correspondance, elles restent (`git chk` → `checkout`).
+fn drop_loose_matches(out: &mut Vec<Suggestion>) {
+    if out.iter().any(|s| s.rank < LOOSE_RANK) {
+        out.retain(|s| s.rank < LOOSE_RANK);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1014,6 +1025,22 @@ mod tests {
             .map(|s| s.label)
             .collect();
         assert_eq!(found[0], "cherry-pick", "{found:?}");
+    }
+
+    #[test]
+    fn hides_loose_matches_behind_better_ones() {
+        let completer = Completer::new(vec![command(
+            r#"{"names": ["g"], "subcommands": [{"names": ["checkout"]},
+                {"names": ["credential-helper-selector"]}]}"#,
+        )]);
+        // `che` : `checkout` commence par le mot, la correspondance floue part.
+        assert_eq!(labels_of(&completer, "g che"), ["checkout"]);
+        // Sans meilleure correspondance, la recherche floue reste.
+        assert_eq!(labels_of(&completer, "g chk"), ["checkout"]);
+        assert_eq!(
+            labels_of(&completer, "g chs"),
+            ["credential-helper-selector"]
+        );
     }
 
     fn command(json: &str) -> Command {

@@ -9,6 +9,9 @@ use serde::{Deserialize, Serialize};
 /// Nombre maximum de mots retenus dans l'historique d'utilisation.
 const MAX_ENTRIES: usize = 5000;
 
+/// Rang des correspondances floues de [`match_rank`] : lettres dans l'ordre.
+pub const LOOSE_RANK: u8 = 3;
+
 /// Qualité de la correspondance entre `name` et le mot tapé, de 0 (le nom
 /// commence par le mot) à 3 (les lettres du mot apparaissent dans l'ordre).
 /// `None` si le nom ne correspond pas.
@@ -34,7 +37,7 @@ pub fn match_rank(name: &str, query: &str) -> Option<u8> {
         && bare_name.chars().next() == bare_query.chars().next()
         && is_subsequence(bare_query, bare_name)
     {
-        return Some(3);
+        return Some(LOOSE_RANK);
     }
     None
 }

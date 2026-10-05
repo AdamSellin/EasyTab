@@ -75,7 +75,8 @@ l'historique du shell (`~/.bash_history`, `~/.zsh_history`, historique PSReadLin
 
 **Classement.** Les suggestions sont classées par qualité de correspondance (début du nom, puis
 recherche floue : `git chk` trouve `checkout`), puis par fréquence d'utilisation, retenue dans
-`~/.easytab/usage.json`.
+`~/.easytab/usage.json`. La recherche floue ne sert que si aucune suggestion ne commence par
+le mot tapé ni ne le contient : `git che` propose `checkout`, pas `credential-helper-selector`.
 
 **Valeurs calculées.** Les branches, scripts, conteneurs… viennent des *generators* des specs
 Fig : EasyTab lance la commande prévue par la spec (`git branch`, lecture de `package.json`…) en
