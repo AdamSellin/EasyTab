@@ -1,6 +1,6 @@
 # Guide d'EasyTab
 
-Tout ce que le [README](../README.md) ne dit pas : la liste, les réglages, d'où viennent les
+Tout ce que le [README](../README.fr.md) ne dit pas : la liste, les réglages, d'où viennent les
 suggestions, les specs personnelles, l'installation depuis les sources.
 
 - [La liste](#la-liste)
