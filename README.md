@@ -1,36 +1,37 @@
 <p align="center">
-  <img src="docs/images/logo.svg" alt="Logo d'EasyTab" width="96">
+  <img src="docs/images/logo.svg" alt="EasyTab logo" width="96">
 </p>
 
 <h1 align="center">EasyTab</h1>
 
+<p align="center"><b>English</b> · <a href="README.fr.md">Français</a></p>
+
 <p align="center">
-  L'autocomplétion façon IDE pour ton terminal.<br>
-  Windows, macOS et Linux · PowerShell, bash, zsh et Git Bash.
+  IDE-style autocomplete for your terminal.<br>
+  Windows, macOS and Linux · PowerShell, bash, zsh and Git Bash.
 </p>
 
 <p align="center">
-  <img src="docs/images/easytab.png" alt="La liste d'EasyTab sous le curseur, dans Windows Terminal" width="720">
+  <img src="docs/images/easytab.png" alt="The EasyTab list under the cursor, in Windows Terminal" width="720">
 </p>
 
 ---
 
-Pendant que tu tapes une commande, EasyTab ouvre une petite liste sous le curseur : sous-commandes,
-options, branches git, scripts npm, fichiers… avec leur description. Tu choisis, Tab, c'est écrit.
+As you type a command, EasyTab opens a small list under the cursor: subcommands, options, git
+branches, npm scripts, files… with their description. Pick one, press Tab, it's written.
 
-- **Plus de 700 commandes** connues, grâce aux specs de [Fig](https://github.com/withfig/autocomplete) :
-  git, docker, npm, kubectl, composer, symfony…
-- **Les valeurs de ton projet** : branches, scripts de `package.json`, cibles du `Makefile`,
-  hôtes SSH, conteneurs docker.
-- **Ton historique** en tête de liste, et les suggestions que tu choisis le plus souvent.
-- **Rien à apprendre** : le terminal et le shell restent les tiens, la liste ne prend jamais le
-  clavier.
+- **Over 700 commands** out of the box, thanks to the [Fig](https://github.com/withfig/autocomplete)
+  specs: git, docker, npm, kubectl, composer, symfony…
+- **Your project's values**: branches, `package.json` scripts, `Makefile` targets, SSH hosts,
+  docker containers.
+- **Your history** at the top of the list, and the suggestions you pick most often.
+- **Nothing to learn**: your terminal and shell stay yours, the list never grabs the keyboard.
 
 <p align="center">
-  <img src="docs/images/demo.gif" alt="git checkout, une branche, npm run dev et cd src/ complétés avec la liste" width="720">
+  <img src="docs/images/demo.gif" alt="git checkout, a branch, npm run dev and cd src/ completed with the list" width="720">
 </p>
 
-## Installer
+## Install
 
 ```sh
 # macOS, Linux
@@ -38,31 +39,32 @@ curl -fsSL https://github.com/AdamSellin/EasyTab/releases/latest/download/instal
 ```
 
 ```powershell
-# Windows (PowerShell et Git Bash)
+# Windows (PowerShell and Git Bash)
 irm https://github.com/AdamSellin/EasyTab/releases/latest/download/install.ps1 | iex
 ```
 
-Ouvre ensuite un nouveau terminal. Pour mettre à jour : `easytab update`.
+Then open a new terminal. To update: `easytab update`.
 
-## Utiliser
+## Use
 
-| Touche | Action |
+| Key | Action |
 |---|---|
-| ↑ ↓ | Choisir une suggestion |
-| Tab | L'écrire |
-| Entrée | L'écrire si elle complète le mot tapé, sinon lancer la commande |
-| Échap | Fermer la liste |
+| ↑ ↓ | Pick a suggestion |
+| Tab | Write it |
+| Enter | Write it if it completes the typed word, otherwise run the command |
+| Esc | Close the list |
 
-| Commande | |
+| Command | |
 |---|---|
-| `easytab config` | Ouvre les réglages (`~/.easytab/config.toml`) |
-| `easytab doctor` | Vérifie l'installation |
-| `easytab update` | Installe la dernière version |
-| `easytab uninstall` | Retire EasyTab du shell |
+| `easytab config` | Opens the settings (`~/.easytab/config.toml`) |
+| `easytab doctor` | Checks the installation |
+| `easytab update` | Installs the latest version |
+| `easytab uninstall` | Removes EasyTab from the shell |
 
-Tout le reste (réglages, specs personnelles, compilation) est dans le [guide](docs/guide.md).
+Everything else (settings, custom specs, building from source) is in the
+[guide](docs/guide.md) (in French for now).
 
-## Licence
+## License
 
-MIT. Les specs de complétion viennent de [withfig/autocomplete](https://github.com/withfig/autocomplete)
-(MIT, voir [specs/LICENSE-fig](specs/LICENSE-fig)).
+MIT. Completion specs come from [withfig/autocomplete](https://github.com/withfig/autocomplete)
+(MIT, see [specs/LICENSE-fig](specs/LICENSE-fig)).

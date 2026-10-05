@@ -1,0 +1,70 @@
+<p align="center">
+  <img src="docs/images/logo.svg" alt="Logo d'EasyTab" width="96">
+</p>
+
+<h1 align="center">EasyTab</h1>
+
+<p align="center"><a href="README.md">English</a> · <b>Français</b></p>
+
+<p align="center">
+  L'autocomplétion façon IDE pour ton terminal.<br>
+  Windows, macOS et Linux · PowerShell, bash, zsh et Git Bash.
+</p>
+
+<p align="center">
+  <img src="docs/images/easytab.png" alt="La liste d'EasyTab sous le curseur, dans Windows Terminal" width="720">
+</p>
+
+---
+
+Pendant que tu tapes une commande, EasyTab ouvre une petite liste sous le curseur : sous-commandes,
+options, branches git, scripts npm, fichiers… avec leur description. Tu choisis, Tab, c'est écrit.
+
+- **Plus de 700 commandes** connues, grâce aux specs de [Fig](https://github.com/withfig/autocomplete) :
+  git, docker, npm, kubectl, composer, symfony…
+- **Les valeurs de ton projet** : branches, scripts de `package.json`, cibles du `Makefile`,
+  hôtes SSH, conteneurs docker.
+- **Ton historique** en tête de liste, et les suggestions que tu choisis le plus souvent.
+- **Rien à apprendre** : le terminal et le shell restent les tiens, la liste ne prend jamais le
+  clavier.
+
+<p align="center">
+  <img src="docs/images/demo.gif" alt="git checkout, une branche, npm run dev et cd src/ complétés avec la liste" width="720">
+</p>
+
+## Installer
+
+```sh
+# macOS, Linux
+curl -fsSL https://github.com/AdamSellin/EasyTab/releases/latest/download/install.sh | sh
+```
+
+```powershell
+# Windows (PowerShell et Git Bash)
+irm https://github.com/AdamSellin/EasyTab/releases/latest/download/install.ps1 | iex
+```
+
+Ouvre ensuite un nouveau terminal. Pour mettre à jour : `easytab update`.
+
+## Utiliser
+
+| Touche | Action |
+|---|---|
+| ↑ ↓ | Choisir une suggestion |
+| Tab | L'écrire |
+| Entrée | L'écrire si elle complète le mot tapé, sinon lancer la commande |
+| Échap | Fermer la liste |
+
+| Commande | |
+|---|---|
+| `easytab config` | Ouvre les réglages (`~/.easytab/config.toml`) |
+| `easytab doctor` | Vérifie l'installation |
+| `easytab update` | Installe la dernière version |
+| `easytab uninstall` | Retire EasyTab du shell |
+
+Tout le reste (réglages, specs personnelles, compilation) est dans le [guide](docs/guide.md).
+
+## Licence
+
+MIT. Les specs de complétion viennent de [withfig/autocomplete](https://github.com/withfig/autocomplete)
+(MIT, voir [specs/LICENSE-fig](specs/LICENSE-fig)).
