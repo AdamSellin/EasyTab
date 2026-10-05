@@ -22,7 +22,7 @@ suggestions, les specs personnelles, l'installation depuis les sources.
 
 Quand la liste est fermée, Tab garde son comportement habituel (complétion du shell).
 
-La liste s'affiche dans une fenêtre flottante façon Fig (`easytab-overlay`), placée sous le
+La liste s'affiche dans une fenêtre flottante (`easytab-overlay`), placée sous le
 curseur du terminal : coins arrondis, ombre, icônes par type (branche git, script npm, dossier,
 fichier, option…) et description en bas. La fenêtre ne prend jamais le focus : le clavier reste
 au terminal. Si elle ne trouve pas le curseur (ou avec `EASYTAB_OVERLAY=0`), la liste est
@@ -36,7 +36,7 @@ journalise chaque position du curseur lue par la fenêtre.
 - Linux : sessions X11 seulement, position déduite de la fenêtre active. Sous Wayland, la liste
   reste dans le terminal (`EASYTAB_OVERLAY=1` essaie quand même, pour un terminal XWayland).
 
-Dans le terminal, la liste ressemble aussi à celle de Fig : une pastille colorée par type (`>`
+Dans le terminal, la liste montre une pastille colorée par type (`>`
 commande, `$` sous-commande, `-` option, `@` valeur calculée, `/` dossier…), les lettres tapées en
 gras, les arguments attendus en gris (`--cleanup <mode>`) et la description de la suggestion
 choisie en bas. Avec `EASYTAB_ICONS=emoji`, les pastilles deviennent des emoji (📦 🚩 🌿 📁…).
@@ -69,7 +69,7 @@ Désactiver : `EASYTAB_DISABLE=1` pour une session, `easytab uninstall` pour de 
 les specs de [withfig/autocomplete](https://github.com/withfig/autocomplete), embarquées dans
 EasyTab (voir [specs/README.md](../specs/README.md)).
 
-**Historique.** Comme dans Fig, les commandes déjà tapées qui prolongent la ligne en cours passent
+**Historique.** Les commandes déjà tapées qui prolongent la ligne en cours passent
 en tête (`docker-compose u` → `docker-compose up -d --build`, icône d'horloge), tirées de
 l'historique du shell (`~/.bash_history`, `~/.zsh_history`, historique PSReadLine de PowerShell).
 
@@ -212,7 +212,7 @@ cargo test
 |---|---|
 | `crates/easytab-core` | Suit l'état du shell (marqueurs de prompt `OSC 133`, dossier courant `OSC 7`, copie de l'écran) et transforme la ligne en cours en suggestions à partir des specs. |
 | `crates/easytab-term` | Wrapper PTY : lance le shell dans un pseudo-terminal, relaie clavier et écran, dessine la liste de suggestions. |
-| `crates/easytab-overlay` | Fenêtre flottante façon Fig, placée sous le curseur du terminal. |
+| `crates/easytab-overlay` | Fenêtre flottante, placée sous le curseur du terminal. |
 | `crates/easytab-cli` | Commande `easytab` : `install`, `uninstall`, `update`, `config`, `doctor`, `init`. |
 | `shell-integration/` | Scripts zsh, bash et PowerShell qui relancent le shell sous `easytab-term` et émettent les marqueurs de prompt. |
 | `specs/` | Specs de complétion importées de Fig. |
