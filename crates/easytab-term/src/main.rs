@@ -195,8 +195,12 @@ fn run(args: Args) -> Result<i32> {
     thread::spawn(move || {
         let mut stdin = io::stdin().lock();
         let mut buf = [0u8; 4096];
+        let mut input_log = open_log();
         while let Ok(n @ 1..) = stdin.read(&mut buf) {
             let mut data = buf[..n].to_vec();
+            if let Some(log) = input_log.as_mut() {
+                let _ = writeln!(log, "clavier {:?}", String::from_utf8_lossy(&data));
+            }
             if let Some((row, col, range)) = position_tx
                 .as_ref()
                 .and_then(|_| popup::cursor_report(&data))

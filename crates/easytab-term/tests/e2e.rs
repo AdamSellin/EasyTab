@@ -17,13 +17,15 @@ use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 
 const ROWS: u16 = 30;
 const COLS: u16 = 100;
-const TIMEOUT: Duration = Duration::from_secs(90);
+const TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Le wrapper qui tourne dans un pseudo-terminal, et une copie de l'écran.
 struct Terminal {
     writer: Box<dyn Write + Send>,
     output: mpsc::Receiver<Vec<u8>>,
     parser: vt100::Parser,
+    /// Journal d'easytab-term (`EASYTAB_LOG`), montré en cas d'échec.
+    log: PathBuf,
     _child: Box<dyn portable_pty::Child + Send + Sync>,
     _master: Box<dyn portable_pty::MasterPty + Send>,
 }
@@ -49,6 +51,8 @@ impl Terminal {
         cmd.env("TERM", "xterm-256color");
         // La liste dans le terminal : la fenêtre flottante n'a pas d'écran ici.
         cmd.env("EASYTAB_OVERLAY", "0");
+        let log = home.join("easytab.log");
+        cmd.env("EASYTAB_LOG", &log);
         cmd.env_remove("EASYTAB_TERM");
         cmd.env_remove("EASYTAB_DISABLE");
         let child = pair
@@ -72,6 +76,7 @@ impl Terminal {
             writer,
             output,
             parser: vt100::Parser::new(ROWS, COLS, 0),
+            log,
             _child: child,
             _master: pair.master,
         }
@@ -120,14 +125,22 @@ impl Terminal {
             .to_string()
     }
 
+    /// L'écran et la fin du journal d'easytab-term, pour comprendre un échec.
+    fn report(&self) -> String {
+        let log = std::fs::read_to_string(&self.log).unwrap_or_default();
+        let lines: Vec<&str> = log.lines().collect();
+        let tail = lines[lines.len().saturating_sub(40)..].join("\n");
+        format!("Écran :\n{}\nJournal :\n{tail}", self.screen())
+    }
+
     /// Attend que l'écran vérifie `ok`, sinon échoue en montrant l'écran.
     fn wait_for(&mut self, what: &str, ok: impl Fn(&Self) -> bool) {
         let start = Instant::now();
         while !ok(self) {
             if start.elapsed() > TIMEOUT {
                 panic!(
-                    "{what} : toujours absent après {TIMEOUT:?}. Écran :\n{}",
-                    self.screen()
+                    "{what} : toujours absent après {TIMEOUT:?}.\n{}",
+                    self.report()
                 );
             }
             self.pump(Duration::from_millis(200));
@@ -154,7 +167,7 @@ fn integration(file: &str) -> String {
         .join(file);
     std::fs::read_to_string(path)
         .unwrap()
-        .replace("__EASYTAB_TERM_BIN__", "easytab-term-absent")
+        .replace("__EASYTAB_TERM_BIN__", "'easytab-term-absent'")
 }
 
 /// Tape `git checko`, attend la liste, choisit `checkout` avec Tab : la ligne
@@ -185,8 +198,8 @@ fn completes_git_checkout(term: &mut Terminal) {
     });
     assert!(
         !term.screen().contains("not a git command") && !term.screen().contains("usage: git"),
-        "Entrée dans la liste ne doit pas lancer la commande. Écran :\n{}",
-        term.screen()
+        "Entrée dans la liste ne doit pas lancer la commande.\n{}",
+        term.report()
     );
     // Échap ferme la liste sans rien insérer (l'option insérée finit par une
     // espace, que `cursor_line` ne garde pas).
@@ -198,8 +211,8 @@ fn completes_git_checkout(term: &mut Terminal) {
     assert_eq!(
         term.cursor_line(),
         format!("{line} -"),
-        "Échap ne doit rien insérer. Écran :\n{}",
-        term.screen()
+        "Échap ne doit rien insérer.\n{}",
+        term.report()
     );
 }
 
