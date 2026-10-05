@@ -559,10 +559,19 @@ fn remove_old_copies() {
     }
 }
 
+/// Dossier personnel : `HOME` ou `USERPROFILE` d'abord, comme pour les
+/// réglages (sous Windows, `dirs` ignore ces variables).
+fn home_dir() -> Option<PathBuf> {
+    std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(PathBuf::from)
+        .or_else(dirs::home_dir)
+}
+
 /// Historique d'utilisation (`~/.easytab/usage.json`), qui fait remonter les
 /// suggestions les plus utilisées.
 fn load_usage() -> Usage {
-    match dirs::home_dir() {
+    match home_dir() {
         Some(home) => Usage::load(&home.join(".easytab").join("usage.json")),
         None => Usage::default(),
     }
@@ -571,7 +580,7 @@ fn load_usage() -> Usage {
 /// Specs de l'utilisateur (`~/.easytab/specs/*.json`). Les fichiers invalides
 /// sont signalés dans le journal (`EASYTAB_LOG`).
 fn load_custom_specs() -> Vec<spec::Spec> {
-    let Some(home) = dirs::home_dir() else {
+    let Some(home) = home_dir() else {
         return Vec::new();
     };
     let (specs, errors) = spec::custom(&home.join(".easytab").join("specs"));
