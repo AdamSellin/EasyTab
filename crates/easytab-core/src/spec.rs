@@ -3,8 +3,10 @@
 //! `tools/import-fig-specs.mjs` à partir des specs Fig.
 
 use std::collections::HashMap;
+use std::sync::OnceLock;
 
 use serde::{Deserialize, Serialize};
+use serde_json::value::RawValue;
 
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
@@ -86,18 +88,73 @@ pub enum Template {
     Folders,
 }
 
-#[derive(Debug, Deserialize)]
-pub struct Bundle {
-    pub source: String,
-    pub specs: Vec<Command>,
+/// Spec de premier niveau, lue à la demande : seuls ses noms et sa description
+/// sont lus au démarrage, le reste à la première complétion de la commande.
+#[derive(Debug)]
+pub struct Spec {
+    pub names: Vec<String>,
+    pub description: Option<String>,
+    raw: Option<Box<RawValue>>,
+    command: OnceLock<Command>,
 }
 
-impl Bundle {
-    /// Specs embarquées dans le binaire (`specs/specs.json`).
-    pub fn builtin() -> Self {
-        serde_json::from_str(include_str!("../../../specs/specs.json"))
-            .expect("specs/specs.json invalide")
+impl Spec {
+    pub fn command(&self) -> &Command {
+        self.command.get_or_init(|| {
+            self.raw
+                .as_ref()
+                .and_then(|raw| serde_json::from_str(raw.get()).ok())
+                .unwrap_or_default()
+        })
     }
+}
+
+impl From<Command> for Spec {
+    fn from(command: Command) -> Self {
+        Self {
+            names: command.names.clone(),
+            description: command.description.clone(),
+            raw: None,
+            command: OnceLock::from(command),
+        }
+    }
+}
+
+impl From<Box<RawValue>> for Spec {
+    fn from(raw: Box<RawValue>) -> Self {
+        #[derive(Deserialize)]
+        struct Head {
+            #[serde(default)]
+            names: Vec<String>,
+            description: Option<String>,
+        }
+        let head: Head = serde_json::from_str(raw.get()).unwrap_or(Head {
+            names: Vec::new(),
+            description: None,
+        });
+        Self {
+            names: head.names,
+            description: head.description,
+            raw: Some(raw),
+            command: OnceLock::new(),
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct Bundle {
+    specs: Vec<Box<RawValue>>,
+}
+
+/// Specs embarquées dans le binaire (`specs/specs.json.z`, JSON compressé).
+pub fn builtin() -> Vec<Spec> {
+    let json = inflate(include_bytes!("../../../specs/specs.json.z"));
+    let bundle: Bundle = serde_json::from_slice(&json).expect("specs/specs.json.z invalide");
+    bundle.specs.into_iter().map(Spec::from).collect()
+}
+
+fn inflate(data: &[u8]) -> Vec<u8> {
+    miniz_oxide::inflate::decompress_to_vec_zlib(data).expect("specs embarquées illisibles")
 }
 
 /// Code JavaScript des specs qui ont des generators, par nom de module.
@@ -108,9 +165,9 @@ pub struct Modules {
 }
 
 impl Modules {
-    /// Modules embarqués dans le binaire (`specs/modules.json`).
+    /// Modules embarqués dans le binaire (`specs/modules.json.z`).
     pub fn builtin() -> Self {
-        serde_json::from_str(include_str!("../../../specs/modules.json"))
-            .expect("specs/modules.json invalide")
+        let json = inflate(include_bytes!("../../../specs/modules.json.z"));
+        serde_json::from_slice(&json).expect("specs/modules.json.z invalide")
     }
 }

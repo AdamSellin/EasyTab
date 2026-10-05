@@ -4,7 +4,7 @@ Autocomplétion graphique pour le terminal (Windows, Linux, macOS), dans l'espri
 une liste de suggestions style IDE qui s'affiche pendant que tu tapes une commande.
 
 > **État : suggestions dynamiques.** Une liste s'affiche dans le terminal pendant la frappe,
-> pour 47 commandes courantes (git, docker, npm, cargo, kubectl…), les fichiers et dossiers,
+> pour plus de 700 commandes (les specs de Fig : git, docker, npm, symfony, gradle…), les fichiers et dossiers,
 > et les valeurs propres à ton projet : branches git, scripts npm, conteneurs docker… Voir la
 > suite du plan dans [docs/architecture.md](docs/architecture.md).
 
