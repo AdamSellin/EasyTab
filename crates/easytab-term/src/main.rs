@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use clap::Parser;
@@ -46,6 +46,11 @@ struct Shared {
     app_wants_focus: bool,
     /// Dossier utilisé tant que le shell n'a pas annoncé le sien (`OSC 7`).
     fallback_cwd: PathBuf,
+    /// Dernière frappe transmise au shell, et dernière sortie reçue de lui :
+    /// une touche de la liste attend que le shell ait affiché ce qui a été
+    /// tapé (sinon Tab compléterait l'ancien mot).
+    last_typed: Option<Instant>,
+    last_output: Instant,
 }
 
 impl Shared {
@@ -201,6 +206,8 @@ fn run(args: Args) -> Result<i32> {
         focused: true,
         app_wants_focus: false,
         fallback_cwd,
+        last_typed: None,
+        last_output: Instant::now(),
     }));
     let mut log = open_log();
 
@@ -275,6 +282,9 @@ fn run(args: Args) -> Result<i32> {
             }
             let data = &data[..];
             let mut to_shell = data.to_vec();
+            if Key::parse(data).is_some() {
+                wait_for_echo(&input_shared);
+            }
             {
                 let mut shared = input_shared.lock().unwrap();
                 match Key::parse(data).filter(|&key| shared.popup.handles(key)) {
@@ -300,6 +310,9 @@ fn run(args: Args) -> Result<i32> {
                             }
                             shared.hide(&mut frame);
                             shared.session.feed_input(b"\r");
+                            shared.last_typed = None;
+                        } else {
+                            shared.last_typed = Some(Instant::now());
                         }
                     }
                 }
@@ -407,6 +420,7 @@ fn run(args: Args) -> Result<i32> {
             shared.hide(&mut frame);
             frame.extend_from_slice(&buf[..n]);
             shared.session.feed_output(&buf[..n]);
+            shared.last_output = Instant::now();
             let output = &buf[..n];
             if contains(output, FOCUS_ON) {
                 shared.app_wants_focus = true;
@@ -443,6 +457,29 @@ fn run(args: Args) -> Result<i32> {
     let _ = output_finished.recv_timeout(Duration::from_millis(500));
     drop(raw_mode);
     Ok(status.exit_code() as i32)
+}
+
+/// Le shell n'a peut-être pas encore affiché les dernières lettres tapées
+/// (PowerShell redessine la ligne avec un temps de retard) : attend qu'il ait
+/// répondu puis se soit tu un instant, pour que la liste corresponde à la
+/// ligne. Une demi-seconde au plus, et seulement si la liste est affichée.
+fn wait_for_echo(shared: &Mutex<Shared>) {
+    const QUIET: Duration = Duration::from_millis(40);
+    const MAX: Duration = Duration::from_millis(500);
+    let start = Instant::now();
+    loop {
+        {
+            let shared = shared.lock().unwrap();
+            let caught_up = match shared.last_typed {
+                None => true,
+                Some(typed) => shared.last_output > typed && shared.last_output.elapsed() >= QUIET,
+            };
+            if caught_up || !shared.popup.is_shown() || start.elapsed() >= MAX {
+                return;
+            }
+        }
+        thread::sleep(Duration::from_millis(5));
+    }
 }
 
 /// EasyTab a besoin d'un vrai terminal des deux côtés.

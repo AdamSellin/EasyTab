@@ -205,16 +205,20 @@ fn completes_git_checkout(term: &mut Terminal) {
         "Entrée dans la liste ne doit pas lancer la commande.\n{}",
         term.report()
     );
-    // Échap ferme la liste sans rien insérer (l'option insérée finit par une
-    // espace, que `cursor_line` ne garde pas).
+    // Échap ferme la liste sans rien insérer. L'option choisie peut finir par
+    // `=` (`--conflict=`) : on repart d'une nouvelle option, ` -`, pour que la
+    // liste des options s'ouvre à coup sûr.
+    term.send(b" -");
+    term.wait_for("la liste après ` -`", |t| {
+        t.cursor_line().ends_with(" -") && t.screen().contains('╭')
+    });
     let line = term.cursor_line();
-    term.send(b"-");
-    term.pump(Duration::from_millis(500));
     term.send(b"\x1b");
-    term.pump(Duration::from_millis(500));
+    term.wait_for("la liste fermée", |t| !t.screen().contains('╭'));
+    term.pump(Duration::from_millis(300));
     assert_eq!(
         term.cursor_line(),
-        format!("{line} -"),
+        line,
         "Échap ne doit rien insérer.\n{}",
         term.report()
     );
@@ -297,6 +301,32 @@ fn bash_suggests_history() {
     term.wait_for("la ligne complétée", |t| {
         t.cursor_line() == "$ echo easytab-history-test"
     });
+}
+
+/// Entrée prend la suggestion surlignée qui complète le mot, sans flèche,
+/// et ne lance pas la commande.
+#[test]
+fn enter_inserts_the_highlighted_completion() {
+    let Some(mut term) = start_bash("bash-enter", |home| {
+        std::fs::write(home.join(".bash_history"), "echo easytab-enter-test\n").unwrap();
+    }) else {
+        return;
+    };
+    term.send(b"echo eas");
+    term.wait_for("la commande de l'historique", |t| {
+        t.screen().contains("echo easytab-enter-test") && t.cursor_line() == "$ echo eas"
+    });
+    term.send(b"\r");
+    term.wait_for("la ligne complétée", |t| {
+        t.cursor_line() == "$ echo easytab-enter-test"
+    });
+    term.pump(Duration::from_millis(300));
+    assert_eq!(
+        term.cursor_line(),
+        "$ echo easytab-enter-test",
+        "Entrée ne doit pas lancer la commande.\n{}",
+        term.report()
+    );
 }
 
 /// `make ` propose les cibles du Makefile du dossier courant.

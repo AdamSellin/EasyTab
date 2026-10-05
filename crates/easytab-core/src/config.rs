@@ -31,8 +31,9 @@ pub const TEMPLATE: &str = r#"# Réglages d'EasyTab. Retirez le « # » devant u
 # help = true
 
 [keys]
-# Entrée insère la suggestion choisie avec ↑/↓ (true),
-# ou lance toujours la commande, seul Tab insérant (false).
+# Entrée insère la suggestion surlignée quand elle complète le mot tapé ou
+# qu'on l'a choisie avec ↑/↓ (true), ou lance toujours la commande,
+# seul Tab insérant (false).
 # enter_inserts = true
 "#;
 
