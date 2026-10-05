@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/images/easytab.png" alt="La liste d'EasyTab sous le curseur, dans Windows Terminal" width="720">
+  <img src="docs/images/logo.svg" alt="Logo d'EasyTab" width="96">
 </p>
 
 <h1 align="center">EasyTab</h1>
@@ -7,6 +7,10 @@
 <p align="center">
   L'autocomplétion façon IDE pour ton terminal, dans l'esprit de Fig.<br>
   Windows, macOS et Linux · PowerShell, bash, zsh et Git Bash.
+</p>
+
+<p align="center">
+  <img src="docs/images/easytab.png" alt="La liste d'EasyTab sous le curseur, dans Windows Terminal" width="720">
 </p>
 
 ---
