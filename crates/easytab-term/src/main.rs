@@ -17,6 +17,7 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use clap::Parser;
 use crossterm::terminal;
+use easytab_core::history::{History, Shell as HistoryShell};
 use easytab_core::{Completer, Config, Generators, PowerShell, Session, Usage};
 use overlay::Overlay;
 use popup::{Key, Popup};
@@ -167,13 +168,19 @@ fn run(args: Args) -> Result<i32> {
         .overlay
         .then(|| Overlay::spawn(unavailable))
         .flatten();
+    let use_history = config.list.history;
     let shared = Arc::new(Mutex::new(Shared {
         session: Session::new(rows, cols),
         popup: Popup::new(config),
         completer: {
-            let completer = Completer::builtin()
+            let mut completer = Completer::builtin()
                 .with_generators(generators)
                 .with_usage(load_usage());
+            if use_history {
+                if let Some(kind) = history_shell(&shell) {
+                    completer = completer.with_history(History::load(kind));
+                }
+            }
             match powershell {
                 Some(powershell) => completer.with_powershell(powershell),
                 None => completer,
@@ -483,6 +490,20 @@ fn pty_size(rows: u16, cols: u16) -> PtySize {
         cols,
         pixel_width: 0,
         pixel_height: 0,
+    }
+}
+
+/// Shell dont on lit l'historique.
+fn history_shell(shell: &str) -> Option<HistoryShell> {
+    let name = Path::new(shell)
+        .file_stem()
+        .map(|stem| stem.to_string_lossy().to_ascii_lowercase())
+        .unwrap_or_default();
+    match name.as_str() {
+        "bash" => Some(HistoryShell::Bash),
+        "zsh" => Some(HistoryShell::Zsh),
+        _ if is_powershell(shell) => Some(HistoryShell::PowerShell),
+        _ => None,
     }
 }
 

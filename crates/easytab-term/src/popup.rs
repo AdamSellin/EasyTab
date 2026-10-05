@@ -575,6 +575,7 @@ fn kind_name(kind: Kind) -> &'static str {
         Kind::Folder => "folder",
         Kind::File => "file",
         Kind::Dynamic => "dynamic",
+        Kind::History => "history",
     }
 }
 
@@ -596,6 +597,7 @@ fn badge(kind: Kind, icons: Icons) -> String {
         Kind::Folder => ('/', 33, "📁"),
         Kind::File => ('·', 243, "📄"),
         Kind::Dynamic => ('@', 166, "🌿"),
+        Kind::History => ('↺', 61, "🕘"),
     };
     match icons {
         Icons::Badges => format!("\x1b[0;1;38;5;231;48;5;{color}m {symbol} "),
