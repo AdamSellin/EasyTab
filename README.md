@@ -2,7 +2,12 @@
   <img src="docs/images/logo.svg" alt="EasyTab logo" width="96">
 </p>
 
-<h1 align="center">EasyTab</h1>
+<h1 align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/title-dark.svg">
+    <img alt="EasyTab" src="docs/images/title-light.svg" height="56">
+  </picture>
+</h1>
 
 <p align="center"><b>English</b> · <a href="README.fr.md">Français</a></p>
 
