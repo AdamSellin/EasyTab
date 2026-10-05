@@ -18,7 +18,7 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use crossterm::terminal;
 use easytab_core::history::{History, Shell as HistoryShell};
-use easytab_core::{Completer, Config, Generators, PowerShell, Session, Usage};
+use easytab_core::{spec, Completer, Config, Generators, HelpSpecs, PowerShell, Session, Usage};
 use overlay::Overlay;
 use popup::{Key, Popup};
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
@@ -158,11 +158,18 @@ fn run(args: Args) -> Result<i32> {
             let _ = generated.lock().unwrap().send(());
         })
     });
+    let config = Config::load();
+    // Commandes sans spec : options lues dans leur `--help`.
+    let help = config.list.help.then(|| {
+        let generated = Mutex::new(generated.clone());
+        HelpSpecs::start(move || {
+            let _ = generated.lock().unwrap().send(());
+        })
+    });
     let generators = Generators::start(move || {
         let _ = generated.send(());
     });
     let (unavailable, unavailable_rx) = mpsc::channel();
-    let config = Config::load();
     let overlay = config
         .list
         .overlay
@@ -174,8 +181,12 @@ fn run(args: Args) -> Result<i32> {
         popup: Popup::new(config),
         completer: {
             let mut completer = Completer::builtin()
+                .with_custom(load_custom_specs())
                 .with_generators(generators)
                 .with_usage(load_usage());
+            if let Some(help) = help {
+                completer = completer.with_help(help);
+            }
             if use_history {
                 if let Some(kind) = history_shell(&shell) {
                     completer = completer.with_history(History::load(kind));
@@ -555,6 +566,21 @@ fn load_usage() -> Usage {
         Some(home) => Usage::load(&home.join(".easytab").join("usage.json")),
         None => Usage::default(),
     }
+}
+
+/// Specs de l'utilisateur (`~/.easytab/specs/*.json`). Les fichiers invalides
+/// sont signalés dans le journal (`EASYTAB_LOG`).
+fn load_custom_specs() -> Vec<spec::Spec> {
+    let Some(home) = dirs::home_dir() else {
+        return Vec::new();
+    };
+    let (specs, errors) = spec::custom(&home.join(".easytab").join("specs"));
+    if let Some(mut log) = open_log().filter(|_| !errors.is_empty()) {
+        for error in errors {
+            let _ = writeln!(log, "spec ignorée : {error}");
+        }
+    }
+    specs
 }
 
 fn open_log() -> Option<File> {

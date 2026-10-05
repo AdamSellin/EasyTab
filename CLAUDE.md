@@ -31,6 +31,10 @@ cargo test
 - Réglages de l'utilisateur : `crates/easytab-core/src/config.rs` (`~/.easytab/config.toml`),
   partagé avec `easytab-cli` par `#[path]` pour ne pas y embarquer QuickJS. Tout nouveau réglage
   va aussi dans `TEMPLATE` et dans le README.
+- Ordre des specs d'une commande (`Completer::complete_words`) : `~/.easytab/specs` (`spec::custom`),
+  puis Fig, puis PowerShell (`pwsh.rs`), puis `--help` (`help.rs`). Valeurs lues dans les fichiers
+  du projet (Makefile, composer.json, angular.json) : `project.rs`, seulement là où les
+  generators Fig ne font rien ou demandent `bash`/`cat`.
 
 ## Conventions
 

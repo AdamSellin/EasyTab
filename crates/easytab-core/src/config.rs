@@ -26,6 +26,10 @@ pub const TEMPLATE: &str = r#"# Réglages d'EasyTab. Retirez le « # » devant u
 # Proposer les commandes déjà tapées (historique du shell).
 # history = true
 
+# Commandes sans spec : lire leurs options dans « commande --help »
+# (lancé une fois en arrière-plan, réponse gardée dans ~/.easytab/cache).
+# help = true
+
 [keys]
 # Entrée insère la suggestion choisie avec ↑/↓ (true),
 # ou lance toujours la commande, seul Tab insérant (false).
@@ -47,6 +51,7 @@ pub struct List {
     pub theme: Theme,
     pub icons: Icons,
     pub history: bool,
+    pub help: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -82,6 +87,7 @@ impl Default for List {
             theme: Theme::Dark,
             icons: Icons::Badges,
             history: true,
+            help: true,
         }
     }
 }
@@ -163,6 +169,7 @@ mod tests {
             .replace("# theme", "theme")
             .replace("# icons", "icons")
             .replace("# history", "history")
+            .replace("# help", "help")
             .replace("# enter_inserts", "enter_inserts");
         assert_eq!(Config::parse(&uncommented).unwrap(), Config::default());
     }
@@ -170,7 +177,7 @@ mod tests {
     #[test]
     fn reads_settings() {
         let config = Config::parse(
-            "[list]\nrows = 12\noverlay = false\ntheme = \"light\"\nicons = \"emoji\"\n\
+            "[list]\nrows = 12\noverlay = false\ntheme = \"light\"\nicons = \"emoji\"\nhelp = false\n\
              [keys]\nenter_inserts = false\n",
         )
         .unwrap();
@@ -178,6 +185,7 @@ mod tests {
         assert!(!config.list.overlay);
         assert_eq!(config.list.theme, Theme::Light);
         assert_eq!(config.list.icons, Icons::Emoji);
+        assert!(!config.list.help);
         assert!(!config.keys.enter_inserts);
     }
 
