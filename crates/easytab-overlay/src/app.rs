@@ -1,31 +1,23 @@
-//! Boucle de la fenêtre (Windows) : une fenêtre sans bordure, transparente,
-//! toujours devant, qui ne prend jamais le focus, avec une WebView qui dessine
-//! la liste (`popup.html`).
+//! Boucle de la fenêtre, commune aux systèmes : une fenêtre sans bordure,
+//! transparente, toujours devant, qui ne prend jamais le focus, avec une
+//! WebView qui dessine la liste (`popup.html`). Ce qui dépend du système
+//! (curseur, écran, terminal au premier plan) est dans `platform`.
 
 use std::io::{BufRead, Write};
 use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crate::protocol::{Event, Request, View};
 use tao::dpi::LogicalSize;
 use tao::event::{Event as WindowEvent, StartCause};
-use tao::event_loop::{ControlFlow, EventLoopBuilder};
-use tao::platform::windows::{WindowBuilderExtWindows, WindowExtWindows};
-use tao::window::WindowBuilder;
-use windows::Win32::Foundation::{HWND, POINT};
-use windows::Win32::Graphics::Gdi::{
-    GetMonitorInfoW, MonitorFromPoint, MONITORINFO, MONITOR_DEFAULTTONEAREST,
-};
-use windows::Win32::UI::HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI};
-use windows::Win32::UI::WindowsAndMessaging::{
-    GetWindowLongPtrW, SetWindowLongPtrW, SetWindowPos, ShowWindow, GWL_EXSTYLE, HWND_TOPMOST,
-    SWP_NOACTIVATE, SWP_SHOWWINDOW, SW_HIDE, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT,
-};
+use tao::event_loop::ControlFlow;
+use tao::window::{Window, WindowBuilder};
 use wry::{WebContext, WebViewBuilder};
 
-use crate::caret::{self, Locator};
-use crate::placement::{place, Caret, Measure, Rect, Tracker};
+use crate::estimate::Hint;
+use crate::placement::{place, Caret, Measure, Tracker};
+use crate::platform::{self, Locator, Surface};
+use crate::protocol::{Event, Request, View};
 
 /// Fréquence à laquelle on relit la position du curseur et vérifie que le
 /// terminal est toujours au premier plan.
@@ -33,7 +25,7 @@ const WATCH: Duration = Duration::from_millis(150);
 /// Délai de la relecture qui suit chaque frappe.
 const SETTLE: Duration = Duration::from_millis(50);
 
-enum UserEvent {
+pub enum UserEvent {
     Request(Request),
     /// `easytab-term` s'est arrêté.
     Closed,
@@ -43,8 +35,14 @@ enum UserEvent {
     Caret(u64, Option<Caret>),
 }
 
+/// Notre fenêtre et ce qui la montre, la cache et la place.
+struct Popup {
+    window: Window,
+    surface: Surface,
+}
+
 pub fn run() -> anyhow::Result<()> {
-    let event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
+    let event_loop = platform::event_loop::<UserEvent>()?;
 
     let proxy = event_loop.create_proxy();
     thread::spawn(move || {
@@ -59,18 +57,20 @@ pub fn run() -> anyhow::Result<()> {
         let _ = proxy.send_event(UserEvent::Closed);
     });
 
-    // La recherche du curseur passe par UI Automation, qui interroge d'autres
-    // programmes : elle a son propre fil pour ne jamais bloquer la fenêtre.
-    let (locate, locate_rx) = mpsc::channel::<u64>();
+    // La recherche du curseur interroge d'autres programmes (UI Automation,
+    // accessibilité, serveur X) : elle a son propre fil pour ne jamais
+    // bloquer la fenêtre.
+    let (locate, locate_rx) = mpsc::channel::<(u64, Hint)>();
     let proxy = event_loop.create_proxy();
     thread::spawn(move || {
         let locator = Locator::new();
-        while let Ok(mut generation) = locate_rx.recv() {
+        while let Ok(mut request) = locate_rx.recv() {
             while let Ok(newer) = locate_rx.try_recv() {
-                generation = newer;
+                request = newer;
             }
+            let (generation, hint) = request;
             if proxy
-                .send_event(UserEvent::Caret(generation, locator.locate()))
+                .send_event(UserEvent::Caret(generation, locator.locate(hint)))
                 .is_err()
             {
                 return;
@@ -78,7 +78,7 @@ pub fn run() -> anyhow::Result<()> {
         }
     });
 
-    let window = WindowBuilder::new()
+    let builder = WindowBuilder::new()
         .with_title("EasyTab")
         .with_decorations(false)
         .with_transparent(true)
@@ -86,46 +86,37 @@ pub fn run() -> anyhow::Result<()> {
         .with_visible(false)
         .with_focused(false)
         .with_resizable(false)
-        .with_skip_taskbar(true)
-        .with_undecorated_shadow(false)
-        .with_inner_size(LogicalSize::new(320.0, 240.0))
-        .build(&event_loop)?;
-    let hwnd = window.hwnd();
-    // SAFETY: modifie le style de notre propre fenêtre.
-    unsafe {
-        let style = GetWindowLongPtrW(HWND(hwnd as _), GWL_EXSTYLE);
-        SetWindowLongPtrW(
-            HWND(hwnd as _),
-            GWL_EXSTYLE,
-            style | (WS_EX_NOACTIVATE.0 | WS_EX_TOOLWINDOW.0 | WS_EX_TRANSPARENT.0) as isize,
-        );
-    }
-    let _ = window.set_ignore_cursor_events(true);
+        .with_inner_size(LogicalSize::new(320.0, 240.0));
+    let window = platform::configure(builder).build(&event_loop)?;
+    // Fenêtre jamais active, que les clics traversent.
+    let surface = Surface::new(&window);
 
     let mut context =
         WebContext::new(dirs::data_local_dir().map(|dir| dir.join("EasyTab").join("webview")));
     let proxy = event_loop.create_proxy();
-    let webview = WebViewBuilder::new_with_web_context(&mut context)
+    let builder = WebViewBuilder::new_with_web_context(&mut context)
         .with_transparent(true)
         .with_focused(false)
         .with_html(include_str!("popup.html"))
         .with_ipc_handler(move |request| {
             let _ = proxy.send_event(UserEvent::Page(request.into_body()));
-        })
-        .build(&window)?;
+        });
+    let webview = platform::webview(builder, &window)?;
 
+    let popup = Popup { window, surface };
     let mut state = State::default();
     event_loop.run(move |event, _, control_flow| {
-        let _ = &window;
+        let _ = &webview;
         match event {
             WindowEvent::NewEvents(StartCause::ResumeTimeReached { .. }) => {
                 if Instant::now() >= state.next_check {
-                    state.watch(hwnd, &locate);
+                    state.watch(&popup, &locate);
                 }
             }
             WindowEvent::UserEvent(UserEvent::Request(Request::Show(view))) => {
                 let json = serde_json::to_string(&view).unwrap_or_default();
                 let _ = webview.evaluate_script(&format!("render({json})"));
+                let hint = Hint::from(&view);
                 state.view = Some(view);
                 // La taille de la page arrive avec le nouveau contenu.
                 state.measure = None;
@@ -134,7 +125,7 @@ pub fn run() -> anyhow::Result<()> {
                 if !state.shown {
                     state.reads = 0;
                 }
-                let _ = locate.send(state.generation);
+                let _ = locate.send((state.generation, hint));
                 // Relecture peu après : le terminal met à jour son curseur
                 // avec un temps de retard.
                 state.next_check = Instant::now() + SETTLE;
@@ -142,14 +133,14 @@ pub fn run() -> anyhow::Result<()> {
             WindowEvent::UserEvent(UserEvent::Request(Request::Hide)) => {
                 state.view = None;
                 state.generation += 1;
-                state.hide(hwnd);
+                state.hide(&popup);
             }
             WindowEvent::UserEvent(UserEvent::Page(message)) => {
                 if message == "\"ready\"" {
                     send(Event::Ready);
                 } else if let Ok(measure) = serde_json::from_str::<Measure>(&message) {
                     state.measure = Some(measure);
-                    state.place(hwnd);
+                    state.place(&popup);
                 }
             }
             WindowEvent::UserEvent(UserEvent::Caret(generation, caret))
@@ -158,7 +149,7 @@ pub fn run() -> anyhow::Result<()> {
                 match caret {
                     Some(caret) => {
                         state.failures = 0;
-                        state.read(caret, generation, hwnd);
+                        state.read(caret, generation, &popup);
                     }
                     // Échec passager : on garde la position connue.
                     None if state.tracker.terminal().is_some() => {}
@@ -167,7 +158,7 @@ pub fn run() -> anyhow::Result<()> {
                         // Le terminal dessinera la liste lui-même.
                         state.view = None;
                         state.failures = 0;
-                        state.hide(hwnd);
+                        state.hide(&popup);
                         send(Event::Unavailable);
                     }
                 }
@@ -231,7 +222,7 @@ impl Default for State {
 impl State {
     /// Affiche la fenêtre à la position déduite du curseur, quand la taille
     /// de la page est connue.
-    fn place(&mut self, hwnd: isize) {
+    fn place(&mut self, popup: &Popup) {
         let (Some(view), Some(measure)) = (&self.view, self.measure) else {
             return;
         };
@@ -243,7 +234,7 @@ impl State {
         }
         // L'échelle de l'écran du terminal, où la fenêtre va s'afficher, et
         // non celle de l'écran où elle se trouve encore.
-        let (screen, scale) = work_area(caret.rect);
+        let (screen, scale) = popup.surface.work_area(&popup.window, caret.rect);
         let (x, y, width, height) = place(
             caret.rect,
             caret.cell_width,
@@ -252,23 +243,12 @@ impl State {
             scale,
             screen,
         );
-        // SAFETY: déplace et montre notre propre fenêtre, sans l'activer.
-        unsafe {
-            let _ = SetWindowPos(
-                HWND(hwnd as _),
-                Some(HWND_TOPMOST),
-                x,
-                y,
-                width,
-                height,
-                SWP_NOACTIVATE | SWP_SHOWWINDOW,
-            );
-        }
+        popup.surface.show(&popup.window, x, y, width, height);
         self.shown = true;
     }
 
     /// Nouvelle position du curseur.
-    fn read(&mut self, caret: Caret, generation: u64, hwnd: isize) {
+    fn read(&mut self, caret: Caret, generation: u64, popup: &Popup) {
         let Some(view) = &self.view else { return };
         // Le focus est passé dans un autre terminal sans que celui-ci ait
         // reçu de frappe : la liste n'a plus rien à faire là.
@@ -280,7 +260,7 @@ impl State {
         if elsewhere {
             if !self.hidden_away {
                 self.hidden_away = true;
-                self.hide(hwnd);
+                self.hide(popup);
             }
             return;
         }
@@ -288,81 +268,33 @@ impl State {
         self.reads += 1;
         if changed || self.hidden_away || !self.shown {
             self.hidden_away = false;
-            self.place(hwnd);
+            self.place(popup);
         }
     }
 
-    fn hide(&mut self, hwnd: isize) {
+    fn hide(&mut self, popup: &Popup) {
         self.shown = false;
-        hide(hwnd);
+        popup.surface.hide(&popup.window);
     }
 
     /// Cache la fenêtre quand on quitte le terminal ; sinon relit la position
     /// du curseur, pour suivre le terminal s'il bouge et corriger une lecture
     /// trop ancienne.
-    fn watch(&mut self, hwnd: isize, locate: &mpsc::Sender<u64>) {
+    fn watch(&mut self, popup: &Popup, locate: &mpsc::Sender<(u64, Hint)>) {
         self.next_check = Instant::now() + WATCH;
-        if self.view.is_none() {
-            return;
-        }
+        let Some(view) = &self.view else { return };
         if let Some(terminal) = self.tracker.terminal() {
-            if caret::foreground() != terminal.window {
+            if platform::foreground() != terminal.window {
                 if !self.hidden_away {
                     self.hidden_away = true;
-                    self.hide(hwnd);
+                    self.hide(popup);
                 }
                 return;
             }
         }
+        let hint = Hint::from(view);
         self.generation += 1;
-        let _ = locate.send(self.generation);
-    }
-}
-
-fn hide(hwnd: isize) {
-    // SAFETY: cache notre propre fenêtre.
-    unsafe {
-        let _ = ShowWindow(HWND(hwnd as _), SW_HIDE);
-    }
-}
-
-/// Zone utilisable de l'écran qui contient le curseur (sans la barre des tâches).
-fn work_area(caret: Rect) -> (Rect, f64) {
-    // SAFETY: lecture des informations d'écran ; `info` vit pendant l'appel.
-    unsafe {
-        let monitor = MonitorFromPoint(
-            POINT {
-                x: caret.left,
-                y: caret.top,
-            },
-            MONITOR_DEFAULTTONEAREST,
-        );
-        let (mut dpi_x, mut dpi_y) = (0, 0);
-        let scale = match GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, &mut dpi_x, &mut dpi_y) {
-            Ok(()) if dpi_x > 0 => dpi_x as f64 / 96.0,
-            _ => 1.0,
-        };
-        let mut info = MONITORINFO {
-            cbSize: std::mem::size_of::<MONITORINFO>() as u32,
-            ..Default::default()
-        };
-        if GetMonitorInfoW(monitor, &mut info).as_bool() {
-            let work = info.rcWork;
-            let rect = Rect {
-                left: work.left,
-                top: work.top,
-                right: work.right,
-                bottom: work.bottom,
-            };
-            return (rect, scale);
-        }
-        let everywhere = Rect {
-            left: i32::MIN / 2,
-            top: i32::MIN / 2,
-            right: i32::MAX / 2,
-            bottom: i32::MAX / 2,
-        };
-        (everywhere, scale)
+        let _ = locate.send((self.generation, hint));
     }
 }
 

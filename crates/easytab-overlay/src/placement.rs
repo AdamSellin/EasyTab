@@ -9,6 +9,22 @@ pub struct Rect {
     pub bottom: i32,
 }
 
+impl Rect {
+    /// Écran sans limite, quand on ne connaît pas sa zone utilisable.
+    pub const EVERYWHERE: Rect = Rect {
+        left: i32::MIN / 2,
+        top: i32::MIN / 2,
+        right: i32::MAX / 2,
+        bottom: i32::MAX / 2,
+    };
+
+    /// Le point (`x`, `y`) est dans le rectangle.
+    #[cfg_attr(windows, allow(dead_code))]
+    pub fn contains(&self, x: i32, y: i32) -> bool {
+        (self.left..self.right).contains(&x) && (self.top..self.bottom).contains(&y)
+    }
+}
+
 /// Curseur lu à l'écran : sa case, la largeur d'une case, la fenêtre du
 /// terminal et l'élément qui a le focus (un onglet ou un terminal de VS Code).
 #[derive(Debug, Clone, Copy, PartialEq)]
