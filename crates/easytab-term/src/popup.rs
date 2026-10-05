@@ -5,12 +5,11 @@
 use std::io::Write;
 use std::path::Path;
 
+use easytab_core::config::{Config, Icons, Theme};
 use easytab_core::overlay::{Row, View};
 use easytab_core::{Completer, Completion, Kind, Session};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-/// Nombre de lignes visibles.
-const MAX_ROWS: usize = 8;
 /// Largeur maximale de la liste.
 const MAX_WIDTH: usize = 72;
 /// Largeur maximale de la colonne des noms.
@@ -19,13 +18,40 @@ const MAX_LABEL_WIDTH: usize = 48;
 /// Largeur minimale du cadre.
 const MIN_WIDTH: usize = 24;
 
-const STYLE: &str = "\x1b[0;38;5;252;48;5;236m";
-const STYLE_SELECTED: &str = "\x1b[0;38;5;231;48;5;25m";
-const STYLE_MATCH: &str = "\x1b[1;38;5;231m";
-const STYLE_HINT: &str = "\x1b[22;38;5;244m";
-const STYLE_HINT_SELECTED: &str = "\x1b[22;38;5;153m";
-const STYLE_BORDER: &str = "\x1b[0;38;5;240;48;5;236m";
-const STYLE_FOOTER: &str = "\x1b[0;3;38;5;250;48;5;236m";
+/// Couleurs de la liste dans le terminal.
+struct Palette {
+    normal: &'static str,
+    selected: &'static str,
+    /// Lettres tapées, en gras.
+    matched: &'static str,
+    matched_selected: &'static str,
+    hint: &'static str,
+    hint_selected: &'static str,
+    border: &'static str,
+    footer: &'static str,
+}
+
+const DARK: Palette = Palette {
+    normal: "\x1b[0;38;5;252;48;5;236m",
+    selected: "\x1b[0;38;5;231;48;5;25m",
+    matched: "\x1b[1;38;5;231m",
+    matched_selected: "\x1b[1;38;5;231m",
+    hint: "\x1b[22;38;5;244m",
+    hint_selected: "\x1b[22;38;5;153m",
+    border: "\x1b[0;38;5;240;48;5;236m",
+    footer: "\x1b[0;3;38;5;250;48;5;236m",
+};
+
+const LIGHT: Palette = Palette {
+    normal: "\x1b[0;38;5;236;48;5;255m",
+    selected: "\x1b[0;38;5;231;48;5;25m",
+    matched: "\x1b[1;38;5;16m",
+    matched_selected: "\x1b[1;38;5;231m",
+    hint: "\x1b[22;38;5;244m",
+    hint_selected: "\x1b[22;38;5;153m",
+    border: "\x1b[0;38;5;250;48;5;255m",
+    footer: "\x1b[0;3;38;5;240;48;5;255m",
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Key {
@@ -207,9 +233,18 @@ pub struct Popup {
     navigated: bool,
     /// La liste est affichée dans la fenêtre flottante.
     in_overlay: bool,
+    /// Réglages de `~/.easytab/config.toml`.
+    config: Config,
 }
 
 impl Popup {
+    pub fn new(config: Config) -> Self {
+        Self {
+            config,
+            ..Self::default()
+        }
+    }
+
     /// La liste est à l'écran : les touches de navigation lui reviennent.
     pub fn is_shown(&self) -> bool {
         self.drawn.is_some() || self.in_overlay
@@ -287,7 +322,7 @@ impl Popup {
 
     /// Vrai si la touche revient à la liste plutôt qu'au shell.
     pub fn handles(&self, key: Key) -> bool {
-        self.is_shown() && (key != Key::Enter || self.navigated)
+        self.is_shown() && (key != Key::Enter || (self.navigated && self.config.keys.enter_inserts))
     }
 
     pub fn dismiss(&mut self) {
@@ -323,7 +358,7 @@ impl Popup {
             return None;
         };
         let items = &completion.suggestions;
-        let visible = items.len().min(MAX_ROWS);
+        let visible = items.len().min(self.config.list.rows);
         self.scroll = scrolled(self.selected, self.scroll, visible);
         let query = typed_part(&completion.replace);
         let rows = items
@@ -348,6 +383,7 @@ impl Popup {
             cursor_col: screen.cursor_position().1 as usize,
             total: items.len(),
             first: self.scroll,
+            light: self.config.list.theme == Theme::Light,
         })
     }
 
@@ -386,7 +422,7 @@ impl Popup {
         let items = &completion.suggestions;
         let (screen_rows, cols) = screen.size();
         let (cursor_row, cursor_col) = screen.cursor_position();
-        let visible = items.len().min(MAX_ROWS);
+        let visible = items.len().min(self.config.list.rows);
         let footer = items.iter().any(|s| s.description.is_some());
         let height = (visible + 2 + if footer { 2 } else { 0 }) as u16;
 
@@ -430,7 +466,11 @@ impl Popup {
             .saturating_sub(word_width + 6)
             .min((cols as usize - width) as u16);
         let query = typed_part(&completion.replace);
-        let icons = icons();
+        let icons = self.config.list.icons;
+        let palette = match self.config.list.theme {
+            Theme::Dark => &DARK,
+            Theme::Light => &LIGHT,
+        };
 
         out.extend_from_slice(b"\x1b[?25l");
         let mut row = top;
@@ -443,12 +483,21 @@ impl Popup {
             row += 1;
         };
 
-        border(&mut line, '╭', '╮', inner);
+        border(&mut line, palette, '╭', '╮', inner);
         put(out, &mut line);
         for (i, item) in items.iter().enumerate().skip(self.scroll).take(visible) {
             let selected = i == self.selected;
-            let base = if selected { STYLE_SELECTED } else { STYLE };
-            line.push_str(STYLE_BORDER);
+            let base = if selected {
+                palette.selected
+            } else {
+                palette.normal
+            };
+            let matched = if selected {
+                palette.matched_selected
+            } else {
+                palette.matched
+            };
+            line.push_str(palette.border);
             line.push('│');
             line.push_str(base);
             line.push(' ');
@@ -458,15 +507,15 @@ impl Popup {
 
             let label = fit(&item.label, text_width);
             let mut used = label.width();
-            push_highlighted(&mut line, &label, query, base);
+            push_highlighted(&mut line, &label, query, base, matched);
             if let Some(hint) = &item.hint {
                 let hint = fit(hint, text_width.saturating_sub(used + 1));
                 if !hint.is_empty() {
                     line.push(' ');
                     line.push_str(if selected {
-                        STYLE_HINT_SELECTED
+                        palette.hint_selected
                     } else {
-                        STYLE_HINT
+                        palette.hint
                     });
                     line.push_str(&hint);
                     used += 1 + hint.width();
@@ -474,29 +523,29 @@ impl Popup {
             }
             line.push_str(base);
             line.push_str(&" ".repeat(text_width.saturating_sub(used) + 1));
-            line.push_str(STYLE_BORDER);
+            line.push_str(palette.border);
             line.push('│');
             put(out, &mut line);
         }
         if footer {
-            border(&mut line, '├', '┤', inner);
+            border(&mut line, palette, '├', '┤', inner);
             put(out, &mut line);
             let description = items
                 .get(self.selected)
                 .and_then(|s| s.description.as_deref())
                 .unwrap_or("");
             let description = fit(description, inner - 2);
-            line.push_str(STYLE_BORDER);
+            line.push_str(palette.border);
             line.push('│');
-            line.push_str(STYLE_FOOTER);
+            line.push_str(palette.footer);
             line.push(' ');
             line.push_str(&description);
             line.push_str(&" ".repeat(inner - 1 - description.width()));
-            line.push_str(STYLE_BORDER);
+            line.push_str(palette.border);
             line.push('│');
             put(out, &mut line);
         }
-        border(&mut line, '╰', '╯', inner);
+        border(&mut line, palette, '╰', '╯', inner);
         put(out, &mut line);
 
         restore_cursor(screen, out);
@@ -528,27 +577,11 @@ fn kind_name(kind: Kind) -> &'static str {
 }
 
 /// Ligne horizontale du cadre.
-fn border(line: &mut String, start: char, end: char, inner: usize) {
-    line.push_str(STYLE_BORDER);
+fn border(line: &mut String, palette: &Palette, start: char, end: char, inner: usize) {
+    line.push_str(palette.border);
     line.push(start);
     line.extend(std::iter::repeat_n('─', inner));
     line.push(end);
-}
-
-/// Jeu de pastilles : symboles sur fond coloré, ou emoji avec
-/// `EASYTAB_ICONS=emoji`.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Icons {
-    Badges,
-    Emoji,
-}
-
-fn icons() -> Icons {
-    static ICONS: std::sync::OnceLock<Icons> = std::sync::OnceLock::new();
-    *ICONS.get_or_init(|| match std::env::var("EASYTAB_ICONS").as_deref() {
-        Ok("emoji") => Icons::Emoji,
-        _ => Icons::Badges,
-    })
 }
 
 /// Pastille de 3 colonnes qui indique le type de suggestion.
@@ -574,13 +607,13 @@ fn typed_part(word: &str) -> &str {
 }
 
 /// Écrit `label` en mettant en gras les lettres tapées.
-fn push_highlighted(line: &mut String, label: &str, query: &str, base: &str) {
+fn push_highlighted(line: &mut String, label: &str, query: &str, base: &str, matched: &str) {
     let marked = matched_chars(label, query);
     let mut bold = false;
     for (i, c) in label.chars().enumerate() {
         let want = marked.contains(&i);
         if want != bold {
-            line.push_str(if want { STYLE_MATCH } else { base });
+            line.push_str(if want { matched } else { base });
             bold = want;
         }
         line.push(c);
@@ -750,6 +783,26 @@ mod tests {
     }
 
     #[test]
+    fn follows_the_settings() {
+        let session = session_with(b"git ");
+        let config =
+            Config::parse("[list]\nrows = 3\ntheme = \"light\"\n[keys]\nenter_inserts = false")
+                .unwrap();
+        let mut popup = Popup::new(config);
+        popup.update(&session, &Completer::builtin(), Path::new("/"));
+        let view = popup.view(session.screen()).unwrap();
+        assert_eq!(view.rows.len(), 3);
+        assert!(view.light);
+        let mut out = Vec::new();
+        popup.draw(session.screen(), &mut out);
+        assert!(String::from_utf8_lossy(&out).contains(LIGHT.normal));
+        // Entrée lance toujours la commande, même après ↓.
+        popup.select(1);
+        assert!(!popup.handles(Key::Enter));
+        assert!(popup.handles(Key::Accept));
+    }
+
+    #[test]
     fn accept_sends_the_missing_part() {
         let session = session_with(b"git chec");
         let mut popup = popup_for(&session);
@@ -783,7 +836,10 @@ mod tests {
         assert!(text.contains('╰'), "{text}");
         // « ch » en gras dans « checkout ».
         assert!(
-            text.contains(&format!("{STYLE_MATCH}ch{STYLE_SELECTED}eckout")),
+            text.contains(&format!(
+                "{}ch{}eckout",
+                DARK.matched_selected, DARK.selected
+            )),
             "{text}"
         );
 
