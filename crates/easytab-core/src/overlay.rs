@@ -40,6 +40,9 @@ pub struct View {
     /// Nombre total de suggestions et position de la première ligne visible.
     pub total: usize,
     pub first: usize,
+    /// Thème clair (`[list] theme = "light"`).
+    #[serde(default)]
+    pub light: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

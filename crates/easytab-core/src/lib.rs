@@ -10,6 +10,7 @@
 //!   git, scripts npm…) en exécutant le JavaScript des specs.
 
 mod complete;
+pub mod config;
 mod exec;
 mod files;
 mod generators;
@@ -21,6 +22,7 @@ mod session;
 pub mod spec;
 
 pub use complete::{Completer, Completion, Kind, Suggestion};
+pub use config::Config;
 pub use generators::Generators;
 pub use osc::{Marker, OscScanner};
 pub use rank::Usage;

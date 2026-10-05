@@ -31,6 +31,24 @@ Dans le terminal, la liste ressemble aussi à celle de Fig : une pastille color�
 en gris (`--cleanup <mode>`) et la description de la suggestion choisie en bas. Avec
 `EASYTAB_ICONS=emoji`, les pastilles deviennent des emoji (📦 🚩 🌿 📁…).
 
+### Réglages
+
+`easytab config` crée `~/.easytab/config.toml`, avec chaque réglage commenté ; `easytab doctor`
+signale une erreur dans ce fichier. Rouvrir les terminaux après un changement.
+
+```toml
+[list]
+rows = 8            # suggestions visibles (de 3 à 20)
+overlay = true      # fenêtre flottante, ou false pour la liste dans le terminal
+theme = "dark"      # ou "light"
+icons = "badges"    # ou "emoji" (liste dans le terminal)
+
+[keys]
+enter_inserts = true  # false : Entrée lance toujours la commande, seul Tab insère
+```
+
+Les variables `EASYTAB_OVERLAY` et `EASYTAB_ICONS` passent avant le fichier.
+
 Les suggestions sont classées par qualité de correspondance (début du nom, puis recherche floue :
 `git chk` trouve `checkout`), puis par fréquence d'utilisation, retenue dans `~/.easytab/usage.json`.
 

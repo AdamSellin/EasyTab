@@ -15,6 +15,16 @@
     --mono: "Cascadia Code", "Cascadia Mono", "SF Mono", Menlo, Consolas, monospace;
     --sans: "Segoe UI Variable Text", "Segoe UI", -apple-system, system-ui, sans-serif;
   }
+  .light {
+    --bg: #f7f7f8;
+    --border: rgba(0, 0, 0, 0.12);
+    --text: #2b2d31;
+    --strong: #000000;
+    --hint: #80848c;
+    --footer: #5f636b;
+  }
+  .light .box { box-shadow: 0 3px 8px rgba(0, 0, 0, 0.15); }
+  .light .row.selected .label b { color: #ffffff; }
   html, body {
     margin: 0;
     background: transparent;
@@ -132,6 +142,7 @@
         `<span class="text"><span class="label">${labelHtml(row.label, row.matched)}</span>${hint}</span></div>`;
     });
     const footer = view.description ? `<div class="footer">${escape(view.description)}</div>` : "";
+    document.getElementById("frame").className = view.light ? "light" : "";
     document.getElementById("frame").innerHTML =
       `<div class="box"><div class="rows">${rows.join("")}</div>${footer}</div>`;
     const frame = document.getElementById("frame").getBoundingClientRect();

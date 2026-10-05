@@ -25,6 +25,10 @@ cargo test
 - Publier une version : « Run workflow » sur `Release` dans l'onglet Actions, avec le nom de la
   version (`v0.1.1`), ou pousser un tag `v*`.
 
+- Réglages de l'utilisateur : `crates/easytab-core/src/config.rs` (`~/.easytab/config.toml`),
+  partagé avec `easytab-cli` par `#[path]` pour ne pas y embarquer QuickJS. Tout nouveau réglage
+  va aussi dans `TEMPLATE` et dans le README.
+
 ## Conventions
 
 - Code, commentaires, messages, commits et PR en français.

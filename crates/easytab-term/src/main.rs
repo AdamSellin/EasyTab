@@ -17,7 +17,7 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use clap::Parser;
 use crossterm::terminal;
-use easytab_core::{Completer, Generators, Session, Usage};
+use easytab_core::{Completer, Config, Generators, Session, Usage};
 use overlay::Overlay;
 use popup::{Key, Popup};
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
@@ -154,13 +154,19 @@ fn run(args: Args) -> Result<i32> {
         let _ = generated.send(());
     });
     let (unavailable, unavailable_rx) = mpsc::channel();
+    let config = Config::load();
+    let overlay = config
+        .list
+        .overlay
+        .then(|| Overlay::spawn(unavailable))
+        .flatten();
     let shared = Arc::new(Mutex::new(Shared {
         session: Session::new(rows, cols),
-        popup: Popup::default(),
+        popup: Popup::new(config),
         completer: Completer::builtin()
             .with_generators(generators)
             .with_usage(load_usage()),
-        overlay: Overlay::spawn(unavailable),
+        overlay,
         focused: true,
         app_wants_focus: false,
         fallback_cwd,

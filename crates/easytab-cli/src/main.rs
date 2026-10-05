@@ -1,5 +1,9 @@
 //! `easytab` : installe et désinstalle l'intégration shell, et aide au diagnostic.
 
+// Partagé avec easytab-term sans dépendre de tout easytab-core (QuickJS).
+#[path = "../../easytab-core/src/config.rs"]
+#[allow(dead_code)]
+mod config;
 mod rc;
 
 use std::fs;
@@ -33,6 +37,8 @@ enum Command {
     },
     /// Vérifie l'installation
     Doctor,
+    /// Crée le fichier de réglages s'il n'existe pas, et affiche son chemin
+    Config,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -125,6 +131,7 @@ fn main() -> Result<()> {
         Command::Install { shell } => install(shell.map_or_else(Shell::detect, Ok)?)?,
         Command::Uninstall { shell } => uninstall(shell.map_or_else(Shell::detect, Ok)?)?,
         Command::Doctor => doctor()?,
+        Command::Config => edit_config()?,
     }
     Ok(())
 }
@@ -287,11 +294,64 @@ fn doctor() -> Result<()> {
             }
         );
     }
+    if let Some(path) = config::Config::path() {
+        let (ok, status) = config_status(&path);
+        println!("{} réglages : {status}", mark(ok));
+    }
     let active = std::env::var_os("EASYTAB_TERM").is_some();
     println!(
         "{} ce terminal {} sous EasyTab",
         mark(active),
         if active { "tourne" } else { "ne tourne pas" }
+    );
+    Ok(())
+}
+
+/// État du fichier de réglages, pour `doctor` et `config`.
+fn config_status(path: &Path) -> (bool, String) {
+    match config::Config::read(path) {
+        Ok(Some(_)) => (true, path.display().to_string()),
+        Ok(None) => (
+            true,
+            "par défaut (easytab config pour les changer)".to_string(),
+        ),
+        Err(error) => (
+            false,
+            format!(
+                "{} est invalide, réglages par défaut utilisés :\n     {}",
+                path.display(),
+                error.trim().replace('\n', "\n     ")
+            ),
+        ),
+    }
+}
+
+/// `easytab config` : crée `~/.easytab/config.toml` avec chaque réglage
+/// commenté, puis dit où il est.
+fn edit_config() -> Result<()> {
+    let path = config::Config::path().context("dossier personnel introuvable")?;
+    if !path.exists() {
+        if let Some(dir) = path.parent() {
+            fs::create_dir_all(dir).with_context(|| format!("création de {}", dir.display()))?;
+        }
+        fs::write(&path, config::TEMPLATE)
+            .with_context(|| format!("écriture de {}", path.display()))?;
+        println!("Fichier de réglages créé : {}", path.display());
+    } else {
+        println!("Fichier de réglages : {}", path.display());
+    }
+    let (ok, status) = config_status(&path);
+    if !ok {
+        println!("{} {status}", mark(ok));
+    }
+    let editor = if cfg!(windows) {
+        "notepad"
+    } else {
+        "${EDITOR:-nano}"
+    };
+    println!(
+        "Modifiez-le ({editor} \"{}\"), puis rouvrez vos terminaux.",
+        path.display()
     );
     Ok(())
 }
