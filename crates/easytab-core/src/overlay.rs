@@ -37,6 +37,14 @@ pub struct View {
     /// sa position à l'écran entre deux lectures.
     pub cursor_row: usize,
     pub cursor_col: usize,
+    /// Taille du terminal (colonnes, lignes), pour estimer la position du
+    /// curseur à partir de la fenêtre du terminal quand le système ne la
+    /// donne pas (macOS sans accès à l'accessibilité, Linux). Absente des
+    /// messages d'une version plus ancienne : 0.
+    #[serde(default)]
+    pub term_cols: usize,
+    #[serde(default)]
+    pub term_rows: usize,
     /// Nombre total de suggestions et position de la première ligne visible.
     pub total: usize,
     pub first: usize,
@@ -55,4 +63,20 @@ pub struct Row {
     pub icon: Option<String>,
     /// Positions (en caractères) des lettres tapées dans `label`.
     pub matched: Vec<usize>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reads_a_view_without_terminal_size() {
+        // Message d'une version qui n'envoyait pas la taille du terminal.
+        let line = r#"{"show":{"rows":[],"selected":0,"description":null,"word_width":2,"cursor_row":3,"cursor_col":7,"total":0,"first":0}}"#;
+        let Ok(Request::Show(view)) = serde_json::from_str::<Request>(line) else {
+            panic!("message illisible");
+        };
+        assert_eq!((view.cursor_row, view.cursor_col), (3, 7));
+        assert_eq!((view.term_cols, view.term_rows), (0, 0));
+    }
 }
