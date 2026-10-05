@@ -9,6 +9,7 @@ use crate::exec;
 use crate::files;
 use crate::generators::{Generators, Item};
 use crate::line::{self, Token};
+use crate::pwsh::PowerShell;
 use crate::rank::{self, best_match, Usage};
 use crate::spec::{self, Arg, Command, Generator, Opt, Spec, Template};
 
@@ -59,6 +60,8 @@ pub struct Completer {
     commands: Vec<Spec>,
     /// Ne propose comme commandes que celles installées (dans le PATH).
     installed: Option<OnceLock<HashSet<String>>>,
+    /// Le shell est PowerShell : ses commandes sont décrites par lui-même.
+    powershell: Option<PowerShell>,
     by_name: HashMap<String, usize>,
     generators: Generators,
     usage: Mutex<Usage>,
@@ -89,6 +92,7 @@ impl Completer {
         Self {
             commands,
             installed: None,
+            powershell: None,
             by_name,
             generators: Generators::disabled(),
             usage: Mutex::default(),
@@ -118,6 +122,12 @@ impl Completer {
         let mut completer = Self::from_specs(spec::builtin());
         completer.installed = Some(OnceLock::new());
         completer
+    }
+
+    /// Complète aussi les commandes PowerShell (`Remove-Item -Recurse`).
+    pub fn with_powershell(mut self, powershell: PowerShell) -> Self {
+        self.powershell = Some(powershell);
+        self
     }
 
     /// Active les suggestions dynamiques.
@@ -174,7 +184,11 @@ impl Completer {
             self.push_commands(&current.value, out);
             return;
         };
-        let Some(spec) = self.find(&name.value) else {
+        let Some(spec) = self.find(&name.value).or_else(|| {
+            self.powershell
+                .as_ref()
+                .and_then(|powershell| powershell.spec(&name.value))
+        }) else {
             return;
         };
         context.module = spec.module.as_deref();
@@ -291,7 +305,22 @@ impl Completer {
                 })
             })
             .collect();
+        if let Some(powershell) = &self.powershell {
+            found.extend(powershell.commands().into_iter().filter_map(|name| {
+                Some(Suggestion {
+                    rank: rank::match_rank(&name, prefix)?,
+                    insert: name.clone(),
+                    label: name,
+                    description: None,
+                    kind: Kind::Command,
+                    hint: None,
+                    icon: None,
+                    append_space: true,
+                })
+            }));
+        }
         sort(&mut found);
+        found.dedup_by(|a, b| a.label == b.label);
         out.extend(found);
     }
 
@@ -369,10 +398,18 @@ fn find_subcommand<'a>(node: &'a Command, word: &str) -> Option<&'a Command> {
 }
 
 fn find_option<'a>(node: &'a Command, persistent: &[&'a Opt], flag: &str) -> Option<&'a Opt> {
-    node.options
-        .iter()
-        .chain(persistent.iter().copied())
+    let options = || node.options.iter().chain(persistent.iter().copied());
+    options()
         .find(|o| o.names.iter().any(|n| n == flag))
+        // PowerShell ignore la casse : `-recurse` vaut `-Recurse`. Pas pour les
+        // options d'une lettre, où `-v` et `-V` diffèrent souvent.
+        .or_else(|| {
+            options().find(|o| {
+                o.names
+                    .iter()
+                    .any(|n| n.len() > 2 && !n.starts_with("--") && n.eq_ignore_ascii_case(flag))
+            })
+        })
 }
 
 fn push_subcommands(node: &Command, prefix: &str, out: &mut Vec<Suggestion>) {

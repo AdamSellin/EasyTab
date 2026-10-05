@@ -240,6 +240,37 @@ fn powershell_suggests_and_inserts() {
     completes_git_checkout(&mut term);
 }
 
+/// Les paramètres des commandes PowerShell viennent de PowerShell lui-même.
+#[cfg(windows)]
+#[test]
+fn powershell_suggests_cmdlet_parameters() {
+    let home = temp_home("pwsh-params");
+    let script = home.join("easytab.ps1");
+    std::fs::write(&script, integration("easytab.ps1")).unwrap();
+    let shell = if which("pwsh.exe") {
+        "pwsh.exe"
+    } else {
+        "powershell.exe"
+    };
+    let args = [
+        "-NoLogo".to_string(),
+        "-NoProfile".to_string(),
+        "-NoExit".to_string(),
+        "-Command".to_string(),
+        format!(". '{}'", script.display()),
+    ];
+    let mut term = Terminal::start(shell, &args, &home);
+    term.wait_for("le prompt PowerShell", |t| t.cursor_line().ends_with('>'));
+    term.send(b"Remove-Item -Recu");
+    term.wait_for("le paramètre -Recurse", |t| {
+        t.screen().contains("-Recurse") && !t.cursor_line().ends_with("-Recurse")
+    });
+    term.send(b"\t");
+    term.wait_for("la ligne Remove-Item -Recurse", |t| {
+        t.cursor_line().ends_with("Remove-Item -Recurse")
+    });
+}
+
 #[cfg(windows)]
 fn which(program: &str) -> bool {
     std::env::var_os("PATH")

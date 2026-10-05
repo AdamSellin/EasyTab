@@ -116,7 +116,11 @@ fn find_program(program: &str) -> Option<PathBuf> {
 
 fn search_path(program: &str) -> Option<PathBuf> {
     let path = std::env::var_os("PATH")?;
-    let extensions = executable_extensions();
+    let mut extensions = executable_extensions();
+    // `pwsh.exe` : le nom est déjà complet.
+    if Path::new(program).extension().is_some() && !extensions.contains(&String::new()) {
+        extensions.insert(0, String::new());
+    }
     std::env::split_paths(&path)
         .flat_map(|dir| {
             extensions
