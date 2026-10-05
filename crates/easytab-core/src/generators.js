@@ -2,7 +2,8 @@
 //
 // Rust fournit `__easytab_exec(commande, arguments, dossier)`, qui lance une
 // commande et renvoie `{stdout, stderr, status}` en JSON, et charge l'objet
-// exporté par chaque spec dans `__easytab_modules`.
+// exporté par chaque spec dans `__easytab_modules`. `fig-convert.js`, chargé
+// avant, fournit `__easytab_convert` pour les specs produites par `generateSpec`.
 
 globalThis.__easytab_modules = {};
 
@@ -32,18 +33,42 @@ const iconName = (icon) => {
   return match ? match[1] : undefined;
 };
 
-globalThis.__easytab_run = async (module, path, tokens, cwd, env) => {
-  let generator = __easytab_modules[module];
-  for (const key of JSON.parse(path)) generator = generator[key];
-
-  const exec = (command, args, dir) =>
-    JSON.parse(__easytab_exec(command, args ?? [], dir ?? cwd));
-  // `executeShellCommand` des generators `custom` : ancienne forme (une ligne
-  // de shell, renvoie stdout) ou nouvelle (`{command, args, cwd}`).
+// `executeShellCommand` des generators `custom` et de `generateSpec` : ancienne
+// forme (une ligne de shell, renvoie stdout) ou nouvelle (`{command, args, cwd}`).
+const shell = (cwd) => {
+  const exec = (command, args, dir) => JSON.parse(__easytab_exec(command, args ?? [], dir ?? cwd));
   const executeShellCommand = async (input) =>
     typeof input === "string"
       ? exec("bash", ["-c", input]).stdout
       : exec(input.command, input.args, input.cwd);
+  return { exec, executeShellCommand };
+};
+
+// Specs produites par `generateSpec`, gardées dans `__easytab_modules` pour que
+// leurs generators s'y retrouvent. Seules les plus récentes sont gardées.
+const MAX_GENERATED = 32;
+const generated = [];
+
+// Lance `generateSpec` (au chemin `path` du module) et renvoie la spec
+// produite, convertie au format d'EasyTab (`null` si elle n'en est pas une).
+// L'objet produit est rangé sous le nom `key`, que portent ses generators.
+globalThis.__easytab_generate = async (module, path, key, tokens, cwd) => {
+  let node = __easytab_modules[module];
+  for (const k of JSON.parse(path)) node = node[k];
+  const spec = await node.generateSpec(tokens, shell(cwd).executeShellCommand);
+  if (!spec || typeof spec !== "object") return "null";
+  if (!(key in __easytab_modules)) generated.push(key);
+  __easytab_modules[key] = spec;
+  while (generated.length > MAX_GENERATED) delete __easytab_modules[generated.shift()];
+  const converted = __easytab_convert({ ...spec, name: spec.name ?? "generated" }, { module: key });
+  return JSON.stringify(converted ?? null);
+};
+
+globalThis.__easytab_run = async (module, path, tokens, cwd, env) => {
+  let generator = __easytab_modules[module];
+  for (const key of JSON.parse(path)) generator = generator[key];
+
+  const { exec, executeShellCommand } = shell(cwd);
   const context = {
     currentWorkingDirectory: cwd,
     environmentVariables: env,

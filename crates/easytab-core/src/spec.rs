@@ -19,8 +19,50 @@ pub struct Command {
     pub hidden: bool,
     pub insert: Option<String>,
     /// Module JavaScript d'où viennent les generators de la spec (voir
-    /// [`Modules`]). Seulement sur une spec de premier niveau.
+    /// [`Modules`]). Seulement sur une spec de premier niveau ou chargeable.
     pub module: Option<String>,
+    /// Le contenu de la commande est celui d'une autre spec (`loadSpec` de
+    /// Fig) : une spec chargeable (`php/bin-console`, voir [`loadable`]) ou de
+    /// premier niveau (`git`).
+    pub load: Option<String>,
+    /// Chemin, dans le module, d'une fonction `generateSpec` qui calcule des
+    /// sous-commandes et options à ajouter à celles-ci (`[]` : la spec
+    /// elle-même).
+    pub generate: Option<Vec<PathKey>>,
+}
+
+impl Command {
+    /// Ajoute ce que `generateSpec` a produit, comme Fig : les sous-commandes et
+    /// options de même nom sont remplacées, les autres ajoutées ; les arguments
+    /// générés, s'il y en a, remplacent les autres.
+    pub fn merge(&mut self, generated: &Command) {
+        for sub in &generated.subcommands {
+            match self
+                .subcommands
+                .iter_mut()
+                .find(|s| s.names.iter().any(|n| sub.names.contains(n)))
+            {
+                Some(existing) => *existing = sub.clone(),
+                None => self.subcommands.push(sub.clone()),
+            }
+        }
+        for opt in &generated.options {
+            match self
+                .options
+                .iter_mut()
+                .find(|o| o.names.iter().any(|n| opt.names.contains(n)))
+            {
+                Some(existing) => *existing = opt.clone(),
+                None => self.options.push(opt.clone()),
+            }
+        }
+        if !generated.args.is_empty() {
+            self.args = generated.args.clone();
+        }
+        if self.description.is_none() {
+            self.description = generated.description.clone();
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -50,6 +92,11 @@ pub struct Arg {
     pub suggestions: Vec<Value>,
     pub templates: Vec<Template>,
     pub generators: Vec<Generator>,
+    /// Après cet argument, la ligne se complète avec cette spec (`loadSpec`
+    /// d'un argument), désignée par son chemin comme [`Command::load`]…
+    pub load: Option<String>,
+    /// … ou donnée sur place.
+    pub spec: Option<Box<Command>>,
 }
 
 /// Generator Fig : suggestions calculées par le JavaScript de la spec.
@@ -58,6 +105,9 @@ pub struct Arg {
 pub struct Generator {
     /// Chemin du generator dans l'objet exporté par le module de la spec.
     pub path: Vec<PathKey>,
+    /// Module du generator, quand ce n'est pas celui de la spec : pour une
+    /// spec produite par `generateSpec`, l'objet qu'elle a produit.
+    pub module: Option<String>,
     /// Les résultats sont recalculés quand ce texte apparaît dans le mot en cours.
     pub trigger: Option<String>,
     /// Seule la partie du mot après la dernière occurrence de ce texte sert à
@@ -142,15 +192,29 @@ impl From<Box<RawValue>> for Spec {
 }
 
 #[derive(Deserialize)]
-struct Bundle {
-    specs: Vec<Box<RawValue>>,
+struct Bundle<T> {
+    specs: T,
 }
 
 /// Specs embarquées dans le binaire (`specs/specs.json.z`, JSON compressé).
 pub fn builtin() -> Vec<Spec> {
     let json = inflate(include_bytes!("../../../specs/specs.json.z"));
-    let bundle: Bundle = serde_json::from_slice(&json).expect("specs/specs.json.z invalide");
+    let bundle: Bundle<Vec<Box<RawValue>>> =
+        serde_json::from_slice(&json).expect("specs/specs.json.z invalide");
     bundle.specs.into_iter().map(Spec::from).collect()
+}
+
+/// Specs embarquées que d'autres chargent par `loadSpec`, par chemin
+/// (`specs/loadable.json.z`). Décompressées seulement au premier `loadSpec`.
+pub fn loadable() -> HashMap<String, Spec> {
+    let json = inflate(include_bytes!("../../../specs/loadable.json.z"));
+    let bundle: Bundle<HashMap<String, Box<RawValue>>> =
+        serde_json::from_slice(&json).expect("specs/loadable.json.z invalide");
+    bundle
+        .specs
+        .into_iter()
+        .map(|(path, raw)| (path, Spec::from(raw)))
+        .collect()
 }
 
 fn inflate(data: &[u8]) -> Vec<u8> {
@@ -169,5 +233,53 @@ impl Modules {
     pub fn builtin() -> Self {
         let json = inflate(include_bytes!("../../../specs/modules.json.z"));
         serde_json::from_slice(&json).expect("specs/modules.json.z invalide")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn command(json: &str) -> Command {
+        serde_json::from_str(json).unwrap()
+    }
+
+    #[test]
+    fn merges_generated_content() {
+        let mut spec = command(
+            r#"{"names": ["outil"], "description": "statique",
+                "subcommands": [{"names": ["a"], "description": "avant"}, {"names": ["b"]}],
+                "options": [{"names": ["-v", "--verbose"]}],
+                "args": [{"name": "statique"}]}"#,
+        );
+        spec.merge(&command(
+            r#"{"names": ["outil"], "description": "générée",
+                "subcommands": [{"names": ["a"], "description": "après"}, {"names": ["c"]}],
+                "options": [{"names": ["--verbose"], "description": "nouvelle"}, {"names": ["-q"]}],
+                "args": [{"name": "générée"}]}"#,
+        ));
+        let subs: Vec<_> = spec
+            .subcommands
+            .iter()
+            .map(|s| (s.names[0].as_str(), s.description.as_deref()))
+            .collect();
+        assert_eq!(subs, [("a", Some("après")), ("b", None), ("c", None)]);
+        let options: Vec<_> = spec.options.iter().map(|o| o.names.join(",")).collect();
+        assert_eq!(options, ["--verbose", "-q"]);
+        assert_eq!(spec.args[0].name.as_deref(), Some("générée"));
+        assert_eq!(spec.description.as_deref(), Some("statique"));
+    }
+
+    #[test]
+    fn embeds_loadable_specs() {
+        let loadable = loadable();
+        let console = loadable["php/bin-console"].command();
+        assert_eq!(console.module.as_deref(), Some("php/bin-console"));
+        assert_eq!(console.generate.as_deref(), Some(&[][..]));
+        assert!(loadable.contains_key("dotnet/dotnet-build"));
+        // Pas les specs de services cloud (voir `tools/import-fig-specs.mjs`).
+        assert!(loadable.keys().all(|path| !path.starts_with("aws/")));
+        // Le code de `generateSpec` est embarqué.
+        assert!(Modules::builtin().modules.contains_key("php/bin-console"));
     }
 }

@@ -67,7 +67,9 @@ Les suggestions sont classées par qualité de correspondance (début du nom, pu
 Les suggestions dynamiques (branches, scripts…) viennent des *generators* des specs Fig : EasyTab
 lance la commande prévue par la spec (`git branch`, lecture de `package.json`…) en arrière-plan,
 passe sa sortie au JavaScript de la spec dans un moteur JS embarqué (QuickJS), puis complète la
-liste dès que le résultat arrive. La frappe n'attend jamais.
+liste dès que le résultat arrive. La frappe n'attend jamais. Certaines specs calculent ainsi une
+partie de leurs sous-commandes (`generateSpec` de Fig : les commandes de `composer`, celles de
+`php bin/console` dans un projet Symfony…) ; le résultat est gardé une minute par dossier.
 
 ## Organisation
 
