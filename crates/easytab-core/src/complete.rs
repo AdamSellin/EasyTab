@@ -7,7 +7,7 @@ use std::sync::{Mutex, OnceLock};
 
 use crate::exec;
 use crate::files;
-use crate::generators::{Generators, Item};
+use crate::generators::{Generated, Generators, Item};
 use crate::history::History;
 use crate::line::{self, Token};
 use crate::pwsh::PowerShell;
@@ -66,6 +66,10 @@ pub struct Completer {
     /// Le shell est PowerShell : ses commandes sont décrites par lui-même.
     powershell: Option<PowerShell>,
     by_name: HashMap<String, usize>,
+    /// Specs chargées par `loadSpec` (`php/bin-console`), par chemin : lues à la
+    /// première utilisation (voir [`spec::loadable`]).
+    loadable: OnceLock<HashMap<String, Spec>>,
+    builtin_loadable: bool,
     generators: Generators,
     usage: Mutex<Usage>,
     history: Mutex<History>,
@@ -77,8 +81,24 @@ struct Context<'a> {
     /// Mots de la commande, du nom de la commande au mot en cours compris.
     tokens: Vec<String>,
     /// Module JS de la spec en cours.
-    module: Option<&'a str>,
+    module: Option<String>,
+    /// Des generators calculent encore des suggestions.
     pending: bool,
+    /// Un `generateSpec` calcule encore une partie de la spec.
+    generating: bool,
+}
+
+/// Au plus autant de `loadSpec` à la suite (protège des boucles).
+const MAX_LOADS: usize = 8;
+
+/// État du parcours des mots, qui passe d'une sous-commande à l'autre.
+struct Walk<'w, 'a> {
+    /// Mot en cours.
+    current: &'w Token,
+    /// Options des commandes parentes qui restent valables.
+    persistent: Vec<&'a Opt>,
+    /// `--` a été tapé : les mots suivants ne sont plus des options.
+    options_done: bool,
 }
 
 impl Completer {
@@ -98,6 +118,8 @@ impl Completer {
             installed: None,
             powershell: None,
             by_name,
+            loadable: OnceLock::new(),
+            builtin_loadable: false,
             generators: Generators::disabled(),
             usage: Mutex::default(),
             history: Mutex::default(),
@@ -133,12 +155,23 @@ impl Completer {
     pub fn builtin() -> Self {
         let mut completer = Self::from_specs(spec::builtin());
         completer.installed = Some(OnceLock::new());
+        completer.builtin_loadable = true;
         completer
     }
 
     /// Complète aussi les commandes PowerShell (`Remove-Item -Recurse`).
     pub fn with_powershell(mut self, powershell: PowerShell) -> Self {
         self.powershell = Some(powershell);
+        self
+    }
+
+    /// Specs que les autres chargent par `loadSpec`, par chemin.
+    pub fn with_loadable(self, loadable: HashMap<String, Command>) -> Self {
+        let loadable = loadable
+            .into_iter()
+            .map(|(path, command)| (path, Spec::from(command)))
+            .collect();
+        let _ = self.loadable.set(loadable);
         self
     }
 
@@ -156,6 +189,7 @@ impl Completer {
             tokens: Vec::new(),
             module: None,
             pending: false,
+            generating: false,
         };
         self.complete_words(&line.words, &line.current, &mut context, &mut out);
         self.rank(&context.tokens, &mut out);
@@ -188,7 +222,7 @@ impl Completer {
         Completion {
             replace: line.current.raw,
             suggestions: out,
-            pending: context.pending,
+            pending: context.pending || context.generating,
         }
     }
 
@@ -210,11 +244,27 @@ impl Completer {
         self.by_name.get(name).map(|&i| self.commands[i].command())
     }
 
-    fn complete_words<'a>(
-        &'a self,
+    /// Spec désignée par un `loadSpec` : chargeable (`php/bin-console`) ou de
+    /// premier niveau (`git`).
+    fn find_loaded(&self, path: &str) -> Option<&Command> {
+        let loadable = self.loadable.get_or_init(|| {
+            if self.builtin_loadable {
+                spec::loadable()
+            } else {
+                HashMap::new()
+            }
+        });
+        match loadable.get(path) {
+            Some(spec) => Some(spec.command()),
+            None => self.by_name.get(path).map(|&i| self.commands[i].command()),
+        }
+    }
+
+    fn complete_words(
+        &self,
         words: &[Token],
         current: &Token,
-        context: &mut Context<'a>,
+        context: &mut Context,
         out: &mut Vec<Suggestion>,
     ) {
         let Some((name, rest)) = words.split_first() else {
@@ -228,35 +278,81 @@ impl Completer {
         }) else {
             return;
         };
-        context.module = spec.module.as_deref();
+        context.module = spec.module.clone();
         context.tokens = words
             .iter()
             .chain([current])
             .map(|t| t.value.clone())
             .collect();
+        let walk = Walk {
+            current,
+            persistent: Vec::new(),
+            options_done: false,
+        };
+        self.enter(spec, rest, walk, context, out);
+    }
 
-        let mut node = spec;
-        let mut persistent: Vec<&Opt> = node.options.iter().filter(|o| o.persistent).collect();
+    /// Entre dans `node` : suit son `loadSpec`, ajoute ce que calcule son
+    /// `generateSpec`, puis complète les mots `rest` qui suivent.
+    fn enter<'a>(
+        &'a self,
+        mut node: &'a Command,
+        rest: &[Token],
+        walk: Walk<'_, 'a>,
+        context: &mut Context,
+        out: &mut Vec<Suggestion>,
+    ) {
+        for _ in 0..MAX_LOADS {
+            let Some(loaded) = node.load.as_deref().and_then(|path| self.find_loaded(path)) else {
+                break;
+            };
+            node = loaded;
+            context.module = node.module.clone();
+        }
+        if let (Some(path), Some(module)) = (&node.generate, &context.module) {
+            match self
+                .generators
+                .spec(module, path, node, context.cwd, &context.tokens)
+            {
+                Generated::Ready(Some(generated)) => {
+                    return self.walk(&generated, rest, walk, context, out);
+                }
+                Generated::Ready(None) => {}
+                Generated::Pending => context.generating = true,
+            }
+        }
+        self.walk(node, rest, walk, context, out);
+    }
+
+    fn walk<'a>(
+        &'a self,
+        node: &'a Command,
+        rest: &[Token],
+        mut walk: Walk<'_, 'a>,
+        context: &mut Context,
+        out: &mut Vec<Suggestion>,
+    ) {
+        walk.persistent
+            .extend(node.options.iter().filter(|o| o.persistent));
         let mut positional = 0;
         let mut seen_positional = false;
         let mut pending: Option<&Arg> = None;
-        let mut options_done = false;
 
         for (i, word) in rest.iter().enumerate() {
             let word = word.value.as_str();
             if pending.take().is_some() {
                 continue;
             }
-            if !options_done && word == "--" {
-                options_done = true;
+            if !walk.options_done && word == "--" {
+                walk.options_done = true;
                 continue;
             }
-            if !options_done && word.len() > 1 && word.starts_with('-') {
+            if !walk.options_done && word.len() > 1 && word.starts_with('-') {
                 let (flag, has_value) = match word.split_once('=') {
                     Some((flag, _)) => (flag, true),
                     None => (word, false),
                 };
-                if let Some(opt) = find_option(node, &persistent, flag) {
+                if let Some(opt) = find_option(node, &walk.persistent, flag) {
                     if !has_value {
                         pending = opt.args.first().filter(|arg| !arg.optional);
                     }
@@ -265,17 +361,22 @@ impl Completer {
             }
             if !seen_positional {
                 if let Some(sub) = find_subcommand(node, word) {
-                    node = sub;
-                    persistent.extend(node.options.iter().filter(|o| o.persistent));
-                    positional = 0;
-                    continue;
+                    return self.enter(sub, &rest[i + 1..], walk, context, out);
                 }
             }
             seen_positional = true;
             if let Some(arg) = node.args.get(positional) {
                 if arg.is_command {
                     // `sudo git ch` : on recommence avec la commande imbriquée.
-                    return self.complete_words(&rest[i..], current, context, out);
+                    return self.complete_words(&rest[i..], walk.current, context, out);
+                }
+                // `loadSpec` d'un argument : la suite vient d'une autre spec.
+                if let Some(spec) = arg.spec.as_deref() {
+                    return self.enter(spec, &rest[i + 1..], walk, context, out);
+                }
+                if let Some(loaded) = arg.load.as_deref().and_then(|p| self.find_loaded(p)) {
+                    context.module = loaded.module.clone();
+                    return self.enter(loaded, &rest[i + 1..], walk, context, out);
                 }
                 if !arg.variadic {
                     positional += 1;
@@ -283,19 +384,20 @@ impl Completer {
             }
         }
 
-        let prefix = current.value.as_str();
+        let persistent = &walk.persistent;
+        let prefix = walk.current.value.as_str();
         if let Some(arg) = pending {
             self.push_arg(arg, prefix, "", context, out);
             return;
         }
-        if !options_done && prefix.starts_with('-') {
+        if !walk.options_done && prefix.starts_with('-') {
             if let Some((flag, value)) = prefix.split_once('=') {
-                if let Some(arg) = find_option(node, &persistent, flag).and_then(|o| o.args.first())
+                if let Some(arg) = find_option(node, persistent, flag).and_then(|o| o.args.first())
                 {
                     self.push_arg(arg, value, &format!("{flag}="), context, out);
                 }
             } else {
-                push_options(node, &persistent, prefix, out);
+                push_options(node, persistent, prefix, out);
             }
             return;
         }
@@ -312,7 +414,7 @@ impl Completer {
         // Les options ne servent qu'à défaut d'autre chose : pas pendant que des
         // generators calculent.
         if out.is_empty() && prefix.is_empty() && !context.pending {
-            push_options(node, &persistent, prefix, out);
+            push_options(node, persistent, prefix, out);
         }
     }
 
@@ -391,8 +493,9 @@ impl Completer {
         sort(&mut found);
         out.extend(found);
 
-        if let Some(module) = context.module {
-            for generator in &arg.generators {
+        for generator in &arg.generators {
+            // Le generator d'une spec produite par `generateSpec` a son module.
+            if let Some(module) = generator.module.as_deref().or(context.module.as_deref()) {
                 match self
                     .generators
                     .lookup(module, generator, context.cwd, &context.tokens)
@@ -790,5 +893,134 @@ mod tests {
             .map(|s| s.label)
             .collect();
         assert_eq!(found[0], "cherry-pick", "{found:?}");
+    }
+
+    fn command(json: &str) -> Command {
+        serde_json::from_str(json).unwrap()
+    }
+
+    fn labels_of(completer: &Completer, input: &str) -> Vec<String> {
+        completer
+            .complete(input, Path::new("/"))
+            .suggestions
+            .into_iter()
+            .map(|s| s.label)
+            .collect()
+    }
+
+    #[test]
+    fn follows_load_spec() {
+        let completer = Completer::new(vec![command(
+            r#"{"names": ["outil"], "subcommands": [{"names": ["sous"], "load": "outil/sous"}],
+                "args": [{"name": "cible", "load": "outil/profond"}],
+                "options": [{"names": ["--projet"], "args": [{"name": "projet",
+                    "spec": {"names": ["projet"], "options": [{"names": ["--sur-place"]}]}}]}]}"#,
+        )])
+        .with_loadable(HashMap::from([
+            (
+                "outil/sous".to_string(),
+                command(r#"{"names": ["sous"], "subcommands": [{"names": ["plus-loin"], "load": "outil/profond"}]}"#),
+            ),
+            (
+                "outil/profond".to_string(),
+                command(r#"{"names": ["profond"], "options": [{"names": ["--profond"]}]}"#),
+            ),
+        ]));
+        assert_eq!(labels_of(&completer, "outil sous "), ["plus-loin"]);
+        // Une spec chargée peut en charger une autre.
+        assert_eq!(
+            labels_of(&completer, "outil sous plus-loin --"),
+            ["--profond"]
+        );
+        // `loadSpec` d'un argument : après lui, la suite vient de l'autre spec.
+        assert_eq!(labels_of(&completer, "outil truc --"), ["--profond"]);
+        // Les specs chargeables ne sont pas des commandes.
+        assert!(labels_of(&completer, "outil/so").is_empty());
+    }
+
+    #[test]
+    fn follows_builtin_load_specs() {
+        // `dotnet build` vient de `dotnet/dotnet-build`.
+        let found = labels("dotnet build --verb");
+        assert!(found.contains(&"-v, --verbosity".to_string()), "{found:?}");
+    }
+
+    /// Complète `input` jusqu'à ce que generators et `generateSpec` aient fini.
+    #[cfg(unix)]
+    fn settle(
+        completer: &Completer,
+        notified: &std::sync::mpsc::Receiver<()>,
+        input: &str,
+        cwd: &Path,
+    ) -> Completion {
+        let mut completion = completer.complete(input, cwd);
+        while completion.pending {
+            notified
+                .recv_timeout(std::time::Duration::from_secs(10))
+                .unwrap();
+            completion = completer.complete(input, cwd);
+        }
+        completion
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn merges_generate_spec_results() {
+        use crate::generators::tests::GENERATED_MODULE;
+        use std::sync::mpsc;
+
+        let (ready, notified) = mpsc::channel();
+        let completer = Completer::new(vec![command(
+            r#"{"names": ["gen"], "module": "gen", "generate": [],
+                "subcommands": [{"names": ["statique"]}, {"names": ["remplacee"]}]}"#,
+        )])
+        .with_generators(Generators::start_with(
+            HashMap::from([("gen".to_string(), GENERATED_MODULE.to_string())]),
+            move || {
+                let _ = ready.send(());
+            },
+        ));
+        // En attendant `generateSpec` : la spec statique, sans bloquer.
+        let first = completer.complete("gen ", Path::new("/"));
+        assert!(first.pending);
+        let found: Vec<_> = first.suggestions.iter().map(|s| s.label.as_str()).collect();
+        assert_eq!(found, ["remplacee", "statique"]);
+
+        let found = settle(&completer, &notified, "gen ", Path::new("/"));
+        let found: Vec<_> = found.suggestions.iter().map(|s| s.label.as_str()).collect();
+        assert_eq!(found, ["dynamique", "remplacee", "statique"]);
+        assert_eq!(labels_of(&completer, "gen --g"), ["--genere"]);
+        // Le generator de la sous-commande générée (`gen/charge` n'existe pas :
+        // la sous-commande garde son contenu). Il voit les mots qu'a reçus
+        // `generateSpec` (deux).
+        let found = settle(&completer, &notified, "gen dynamique ", Path::new("/"));
+        let found: Vec<_> = found.suggestions.iter().map(|s| s.label.as_str()).collect();
+        assert_eq!(found, ["valeur-2"]);
+    }
+
+    /// `php` propose `bin/console` dans un projet Symfony (son `generateSpec`
+    /// lance `ls bin/console`), qui se complète avec `php/bin-console`.
+    #[cfg(unix)]
+    #[test]
+    fn php_suggests_bin_console_in_symfony_projects() {
+        use std::sync::mpsc;
+
+        let dir = std::env::temp_dir().join(format!("easytab-php-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("bin")).unwrap();
+        std::fs::write(dir.join("bin/console"), "").unwrap();
+
+        let (ready, notified) = mpsc::channel();
+        let completer = Completer::builtin().with_generators(Generators::start(move || {
+            let _ = ready.send(());
+        }));
+        let found = settle(&completer, &notified, "php ", &dir);
+        let found: Vec<_> = found.suggestions.iter().map(|s| s.label.as_str()).collect();
+        assert!(found.contains(&"bin/console"), "{found:?}");
+        assert!(!found.contains(&"artisan"), "{found:?}");
+        // `php/bin-console` lance à son tour `php bin/console list` : sans PHP
+        // ici, il ne donne rien, mais le calcul se termine.
+        settle(&completer, &notified, "php bin/console ", &dir);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

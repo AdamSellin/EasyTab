@@ -1,6 +1,7 @@
 //! Generators Fig : suggestions calculées en lançant une commande (branches git,
 //! scripts npm, conteneurs docker…) puis en passant sa sortie au JavaScript de
-//! la spec.
+//! la spec. Aussi les specs dont une partie est calculée par `generateSpec`
+//! (commandes de `composer`, scripts de `bin/console`…).
 //!
 //! Ils tournent dans un fil à part, avec le moteur JS embarqué (QuickJS), pour
 //! ne jamais bloquer la frappe. Les résultats sont gardés en cache : la liste
@@ -17,15 +18,22 @@ use rquickjs::{CatchResultExt, Context, Function, Module, Object, Promise, Runti
 use serde::Deserialize;
 
 use crate::exec;
-use crate::spec::{Generator, Modules, PathKey};
+use crate::spec::{Command, Generator, Modules, PathKey};
 
 /// Au-delà, les résultats sont recalculés (en gardant les anciens à l'écran).
 const FRESH_FOR: Duration = Duration::from_secs(5);
+/// Pareil pour les specs produites par `generateSpec` (liste des commandes de
+/// `composer`…), plus coûteuses et qui changent rarement.
+const SPEC_FRESH_FOR: Duration = Duration::from_secs(60);
 /// Durée maximale d'une commande lancée par un generator.
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(5);
 /// Durée maximale d'un generator, JavaScript compris.
 const RUN_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_CACHE_ENTRIES: usize = 256;
+/// Le moteur JS garde autant de specs générées (voir `generators.js`).
+const MAX_SPEC_ENTRIES: usize = 32;
+/// Marque les modules qui sont des specs générées, et non des sources.
+const GENERATED: &str = "#generated:";
 
 /// Suggestion produite par un generator.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -56,15 +64,55 @@ struct Entry {
     running: bool,
 }
 
-struct Job {
-    key: Key,
-    tokens: Vec<String>,
+/// Une spec générée : par `generateSpec` au chemin `path` du module, dans un
+/// dossier.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct SpecKey {
+    module: String,
+    path: Vec<PathKey>,
+    cwd: PathBuf,
 }
+
+impl SpecKey {
+    /// Nom sous lequel le moteur JS garde l'objet produit, et que portent les
+    /// generators de la spec convertie.
+    fn generated_module(&self) -> String {
+        let path = serde_json::to_string(&self.path).unwrap_or_default();
+        format!("{}{GENERATED}{path}:{}", self.module, self.cwd.display())
+    }
+}
+
+#[derive(Default)]
+struct SpecEntry {
+    /// Ce que `generateSpec` a produit (`None` à l'intérieur : rien d'utile).
+    generated: Option<Option<Arc<Command>>>,
+    /// La spec statique complétée par `generated`, calculée à la demande.
+    merged: Option<Arc<Command>>,
+    fetched: Option<Instant>,
+    running: bool,
+}
+
+enum Job {
+    Generator { key: Key, tokens: Vec<String> },
+    Spec { key: SpecKey, tokens: Vec<String> },
+}
+
+/// Résultat de [`Generators::spec`].
+#[derive(Debug, Clone)]
+pub(crate) enum Generated {
+    /// La spec complétée par `generateSpec`, ou `None` s'il n'a rien donné.
+    Ready(Option<Arc<Command>>),
+    /// En cours de calcul : compléter avec la spec statique en attendant.
+    Pending,
+}
+
+type Cache<K, V> = Arc<Mutex<HashMap<K, V>>>;
 
 #[derive(Clone, Default)]
 pub struct Generators {
     worker: Option<Sender<Job>>,
-    cache: Arc<Mutex<HashMap<Key, Entry>>>,
+    cache: Cache<Key, Entry>,
+    specs: Cache<SpecKey, SpecEntry>,
 }
 
 impl Generators {
@@ -80,7 +128,10 @@ impl Generators {
     }
 
     #[cfg(all(test, unix))]
-    fn start_with(modules: HashMap<String, String>, notify: impl Fn() + Send + 'static) -> Self {
+    pub(crate) fn start_with(
+        modules: HashMap<String, String>,
+        notify: impl Fn() + Send + 'static,
+    ) -> Self {
         Self::spawn(move || modules, notify)
     }
 
@@ -90,26 +141,42 @@ impl Generators {
         load: impl FnOnce() -> HashMap<String, String> + Send + 'static,
         notify: impl Fn() + Send + 'static,
     ) -> Self {
-        let cache: Arc<Mutex<HashMap<Key, Entry>>> = Arc::default();
+        let cache: Cache<Key, Entry> = Arc::default();
+        let specs: Cache<SpecKey, SpecEntry> = Arc::default();
         let (worker, jobs) = mpsc::channel::<Job>();
-        let worker_cache = Arc::clone(&cache);
+        let (worker_cache, worker_specs) = (Arc::clone(&cache), Arc::clone(&specs));
         thread::Builder::new()
             .name("easytab-generators".into())
             .spawn(move || {
                 let mut engine = Engine::new(load());
                 for job in jobs {
-                    let items = match &mut engine {
-                        Ok(engine) => engine
-                            .run(&job.key.module, &job.key.path, &job.tokens, &job.key.cwd)
-                            .unwrap_or_default(),
-                        Err(_) => Vec::new(),
-                    };
-                    let mut cache = worker_cache.lock().unwrap();
-                    let entry = cache.entry(job.key).or_default();
-                    entry.items = Some(Arc::new(items));
-                    entry.fetched = Some(Instant::now());
-                    entry.running = false;
-                    drop(cache);
+                    match job {
+                        Job::Generator { key, tokens } => {
+                            let items = match &mut engine {
+                                Ok(engine) => engine
+                                    .run(&key.module, &key.path, &tokens, &key.cwd)
+                                    .unwrap_or_default(),
+                                Err(_) => Vec::new(),
+                            };
+                            let mut cache = worker_cache.lock().unwrap();
+                            let entry = cache.entry(key).or_default();
+                            entry.items = Some(Arc::new(items));
+                            entry.fetched = Some(Instant::now());
+                            entry.running = false;
+                        }
+                        Job::Spec { key, tokens } => {
+                            let generated = match &mut engine {
+                                Ok(engine) => engine.generate(&key, &tokens).ok().flatten(),
+                                Err(_) => None,
+                            };
+                            let mut specs = worker_specs.lock().unwrap();
+                            let entry = specs.entry(key).or_default();
+                            entry.generated = Some(generated.map(Arc::new));
+                            entry.merged = None;
+                            entry.fetched = Some(Instant::now());
+                            entry.running = false;
+                        }
+                    }
                     notify();
                 }
             })
@@ -117,6 +184,7 @@ impl Generators {
         Self {
             worker: Some(worker),
             cache,
+            specs,
         }
     }
 
@@ -154,7 +222,7 @@ impl Generators {
         let fresh = entry.fetched.is_some_and(|t| t.elapsed() < FRESH_FOR);
         if !fresh && !entry.running {
             entry.running = true;
-            let job = Job {
+            let job = Job::Generator {
                 key,
                 tokens: tokens.to_vec(),
             };
@@ -163,6 +231,55 @@ impl Generators {
             }
         }
         entry.items.clone()
+    }
+
+    /// `base` complétée par la fonction `generateSpec` au chemin `path` du
+    /// module, lancée dans `cwd` avec les mots `tokens`. Le résultat est gardé
+    /// une minute par dossier ; ensuite il est recalculé en arrière-plan.
+    pub(crate) fn spec(
+        &self,
+        module: &str,
+        path: &[PathKey],
+        base: &Command,
+        cwd: &Path,
+        tokens: &[String],
+    ) -> Generated {
+        let Some(worker) = &self.worker else {
+            return Generated::Ready(None);
+        };
+        let key = SpecKey {
+            module: module.to_string(),
+            path: path.to_vec(),
+            cwd: cwd.to_path_buf(),
+        };
+        let mut specs = self.specs.lock().unwrap();
+        if specs.len() >= MAX_SPEC_ENTRIES && !specs.contains_key(&key) {
+            specs.retain(|_, entry| entry.running);
+        }
+        let entry = specs.entry(key.clone()).or_default();
+        let fresh = entry.fetched.is_some_and(|t| t.elapsed() < SPEC_FRESH_FOR);
+        if !fresh && !entry.running {
+            entry.running = true;
+            let job = Job::Spec {
+                key,
+                tokens: tokens.to_vec(),
+            };
+            if worker.send(job).is_err() {
+                entry.running = false;
+            }
+        }
+        match &entry.generated {
+            None => Generated::Pending,
+            Some(None) => Generated::Ready(None),
+            Some(Some(generated)) => {
+                let merged = entry.merged.get_or_insert_with(|| {
+                    let mut merged = base.clone();
+                    merged.merge(generated);
+                    Arc::new(merged)
+                });
+                Generated::Ready(Some(Arc::clone(merged)))
+            }
+        }
     }
 }
 
@@ -198,9 +315,15 @@ impl Engine {
             ctx.globals()
                 .set("__easytab_exec", exec)
                 .map_err(|e| e.to_string())?;
-            ctx.eval::<(), _>(include_str!("generators.js"))
-                .catch(&ctx)
-                .map_err(|e| e.to_string())
+            for script in [
+                include_str!("fig-convert.js"),
+                include_str!("generators.js"),
+            ] {
+                ctx.eval::<(), _>(script)
+                    .catch(&ctx)
+                    .map_err(|e| e.to_string())?;
+            }
+            Ok(())
         })?;
         Ok(Self {
             context,
@@ -246,8 +369,39 @@ impl Engine {
         Ok(items)
     }
 
+    /// Lance `generateSpec` et convertit la spec produite.
+    fn generate(&mut self, key: &SpecKey, tokens: &[String]) -> Result<Option<Command>, String> {
+        *self.deadline.lock().unwrap() = Instant::now() + RUN_TIMEOUT;
+        self.load(&key.module)?;
+        let path = serde_json::to_string(&key.path).map_err(|e| e.to_string())?;
+        let cwd = key.cwd.to_string_lossy().into_owned();
+        let json = self.context.with(|ctx| -> Result<String, String> {
+            let generate: Function = ctx
+                .globals()
+                .get("__easytab_generate")
+                .map_err(|e| e.to_string())?;
+            let promise: Promise = generate
+                .call((
+                    key.module.as_str(),
+                    path,
+                    key.generated_module(),
+                    tokens.to_vec(),
+                    cwd,
+                ))
+                .catch(&ctx)
+                .map_err(|e| e.to_string())?;
+            promise
+                .finish::<String>()
+                .catch(&ctx)
+                .map_err(|e| e.to_string())
+        })?;
+        serde_json::from_str(&json).map_err(|e| e.to_string())
+    }
+
     fn load(&mut self, module: &str) -> Result<(), String> {
-        if self.loaded.contains(module) {
+        // Une spec générée est déjà dans le moteur (ou en est sortie) : elle
+        // n'a pas de source.
+        if self.loaded.contains(module) || module.contains(GENERATED) {
             return Ok(());
         }
         let source = self
@@ -278,7 +432,7 @@ impl Engine {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     const MODULE: &str = r#"
@@ -434,5 +588,128 @@ mod tests {
             )
             .unwrap();
         assert!(items.is_empty());
+    }
+
+    /// Spec dont `generateSpec` lit le dossier courant et ajoute une
+    /// sous-commande avec un generator, et en remplace une autre.
+    pub(crate) const GENERATED_MODULE: &str = r#"
+        export default {
+          name: "gen",
+          subcommands: [{ name: "statique" }, { name: "remplacee", description: "avant" }],
+          generateSpec: async (tokens, executeShellCommand) => {
+            const { stdout } = await executeShellCommand({ command: "pwd", args: [] });
+            return {
+              name: "gen",
+              subcommands: [
+                { name: "remplacee", description: "après" },
+                {
+                  name: "dynamique",
+                  description: stdout,
+                  loadSpec: "gen/charge",
+                  args: { generators: { custom: async () => [{ name: "valeur-" + tokens.length }] } },
+                },
+              ],
+              options: [{ name: "--genere" }],
+            };
+          },
+        };
+    "#;
+
+    fn spec_key() -> SpecKey {
+        SpecKey {
+            module: "gen".into(),
+            path: Vec::new(),
+            cwd: PathBuf::from("/"),
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn generates_specs_whose_generators_still_run() {
+        let mut engine =
+            Engine::new(HashMap::from([("gen".into(), GENERATED_MODULE.into())])).unwrap();
+        let key = spec_key();
+        let spec = engine
+            .generate(&key, &tokens(&["gen", ""]))
+            .unwrap()
+            .unwrap();
+        let subs: Vec<_> = spec.subcommands.iter().map(|s| &s.names[0]).collect();
+        assert_eq!(subs, ["remplacee", "dynamique"]);
+        let dynamic = &spec.subcommands[1];
+        assert_eq!(dynamic.description.as_deref(), Some("/"));
+        assert_eq!(dynamic.load.as_deref(), Some("gen/charge"));
+        // Pas de `generate` dans une spec déjà générée.
+        assert!(spec.generate.is_none());
+
+        // Le generator se lit dans l'objet produit, rangé sous son propre nom.
+        let generator = &dynamic.args[0].generators[0];
+        let module = generator.module.as_deref().unwrap();
+        assert_eq!(module, key.generated_module());
+        let items = engine
+            .run(
+                module,
+                &generator.path,
+                &tokens(&["gen", "x", ""]),
+                Path::new("/"),
+            )
+            .unwrap();
+        assert_eq!(names(&items), ["valeur-2"]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn merges_generated_specs_in_the_background() {
+        let (ready, notified) = mpsc::channel();
+        let generators = Generators::start_with(
+            HashMap::from([("gen".into(), GENERATED_MODULE.into())]),
+            move || {
+                let _ = ready.send(());
+            },
+        );
+        let base: Command = serde_json::from_str(
+            r#"{"names": ["gen"], "subcommands": [{"names": ["statique"]},
+                {"names": ["remplacee"], "description": "avant"}]}"#,
+        )
+        .unwrap();
+        let line = tokens(&["gen", ""]);
+        let lookup = || generators.spec("gen", &[], &base, Path::new("/"), &line);
+        assert!(matches!(lookup(), Generated::Pending));
+        notified.recv_timeout(Duration::from_secs(5)).unwrap();
+        let Generated::Ready(Some(merged)) = lookup() else {
+            panic!("spec générée absente");
+        };
+        let subs: Vec<_> = merged
+            .subcommands
+            .iter()
+            .map(|s| (s.names[0].as_str(), s.description.as_deref()))
+            .collect();
+        assert_eq!(
+            subs,
+            [
+                ("statique", None),
+                ("remplacee", Some("après")),
+                ("dynamique", Some("/"))
+            ]
+        );
+        assert_eq!(merged.options[0].names, ["--genere"]);
+        // Gardée : pas de nouveau calcul, la même spec fusionnée.
+        let Generated::Ready(Some(again)) = lookup() else {
+            panic!("spec générée oubliée");
+        };
+        assert!(Arc::ptr_eq(&merged, &again));
+    }
+
+    #[test]
+    fn failing_generate_spec_gives_the_static_spec() {
+        let mut engine = Engine::new(HashMap::from([(
+            "gen".into(),
+            "export default { generateSpec: async () => { throw new Error('non'); } };".into(),
+        )]))
+        .unwrap();
+        assert!(engine.generate(&spec_key(), &tokens(&["gen", ""])).is_err());
+        assert!(matches!(
+            Generators::disabled().spec("gen", &[], &Command::default(), Path::new("/"), &[]),
+            Generated::Ready(None)
+        ));
     }
 }

@@ -3,23 +3,44 @@
 //
 // Usage : node tools/import-fig-specs.mjs <dossier du paquet @withfig/autocomplete> specs
 //
-// Importe toutes les specs de premier niveau du paquet. Écrit deux fichiers,
-// compressés (zlib), dans le dossier de sortie :
-// - `specs.json.z` : la partie déclarative des specs (sous-commandes, options,
-//   valeurs, fichiers et dossiers). Chaque generator dynamique y est remplacé par
-//   son chemin dans la spec d'origine.
-// - `modules.json.z` : le code JavaScript des specs qui ont des generators.
-//   EasyTab l'exécute dans son moteur JS embarqué pour lancer ces generators.
+// Importe toutes les specs de premier niveau du paquet, et celles des
+// sous-dossiers (`php/bin-console`, `dotnet/dotnet-add`…), que d'autres specs
+// chargent par `loadSpec`. Écrit trois fichiers, compressés (zlib), dans le
+// dossier de sortie :
+// - `specs.json.z` : la partie déclarative des specs de premier niveau
+//   (sous-commandes, options, valeurs, fichiers et dossiers). Chaque generator
+//   dynamique y est remplacé par son chemin dans la spec d'origine.
+// - `loadable.json.z` : les specs des sous-dossiers, par chemin, au même
+//   format. Elles ne sont pas proposées comme commandes, et ne sont
+//   décompressées qu'au premier `loadSpec`.
+// - `modules.json.z` : le code JavaScript des specs qui ont des generators ou
+//   un `generateSpec`. EasyTab l'exécute dans son moteur JS embarqué.
+//
+// La conversion elle-même est dans `crates/easytab-core/src/fig-convert.js`,
+// que le moteur embarqué utilise aussi pour les specs produites par
+// `generateSpec`.
 
 import { readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { deflateSync } from "node:zlib";
-import { join, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { runInThisContext } from "node:vm";
+
+const here = dirname(fileURLToPath(import.meta.url));
+runInThisContext(
+  readFileSync(join(here, "../crates/easytab-core/src/fig-convert.js"), "utf8"),
+);
+const convert = globalThis.__easytab_convert;
 
 // Fichiers du paquet qui ne sont pas des specs de commande.
 const SKIP = new Set(["-", "index"]);
 
-const TEMPLATES = new Set(["filepaths", "folders"]);
+// Sous-dossiers ignorés. `aws/` (plus de 400 specs, 36 Mo), `az/` (13 Mo) et
+// `gcloud/` (14 Mo, 600 Ko une fois compressé) décrivent les milliers de
+// sous-commandes de services cloud : ils feraient plus que doubler la taille des
+// specs embarquées pour trois commandes, qui gardent la liste de leurs services
+// (spec de premier niveau) sans le détail. `example/` : exemples de Fig.
+const SKIP_DIRS = new Set(["aws", "az", "gcloud", "example"]);
 
 // Specs dont les suggestions viennent d'une fonction JS qu'on remplace par un
 // équivalent déclaratif.
@@ -31,132 +52,72 @@ const OVERRIDES = {
   },
 };
 
-const toArray = (value) => (value === undefined ? [] : Array.isArray(value) ? value : [value]);
-const names = (value) => toArray(value).filter((n) => typeof n === "string" && n.length > 0);
-const text = (value) => (typeof value === "string" && value.length > 0 ? value : undefined);
-const insertValue = (value) =>
-  typeof value === "string" ? value.replace(/\{cursor(?:\|\d+)?\}/g, "") : undefined;
-
-function compact(object) {
-  for (const key of Object.keys(object)) {
-    const value = object[key];
-    if (value === undefined || value === false || (Array.isArray(value) && value.length === 0)) {
-      delete object[key];
-    }
-  }
-  return object;
-}
-
-function suggestion(raw) {
-  if (typeof raw === "string") return { names: [raw] };
-  if (!raw || typeof raw !== "object") return undefined;
-  const result = compact({
-    names: names(raw.name),
-    description: text(raw.description),
-    insert: insertValue(raw.insertValue),
-    hidden: raw.hidden === true,
-  });
-  return result.names ? result : undefined;
-}
-
-// Generator calculé par du JavaScript : on garde son chemin dans la spec, et ce
-// qui sert à filtrer ses résultats quand c'est une simple chaîne.
-function generator(raw, path) {
-  if (!raw || typeof raw !== "object" || !(raw.script || raw.custom)) return undefined;
-  return compact({
-    path,
-    trigger: text(raw.trigger),
-    query_term: text(raw.getQueryTerm),
-  });
-}
-
-function arg(raw, path) {
-  if (!raw || typeof raw !== "object") return undefined;
-  const templates = new Set(toArray(raw.template).filter((t) => TEMPLATES.has(t)));
-  for (const generator of toArray(raw.generators)) {
-    for (const t of toArray(generator?.template)) if (TEMPLATES.has(t)) templates.add(t);
-  }
-  const generators = Array.isArray(raw.generators)
-    ? raw.generators.map((g, i) => generator(g, [...path, "generators", i]))
-    : [generator(raw.generators, [...path, "generators"])];
-  return compact({
-    name: text(raw.name),
-    description: text(raw.description),
-    optional: raw.isOptional === true,
-    variadic: raw.isVariadic === true,
-    is_command: raw.isCommand === true,
-    suggestions: toArray(raw.suggestions).map(suggestion).filter(Boolean),
-    templates: [...templates],
-    generators: generators.filter(Boolean),
-  });
-}
-
-// Chemin d'un élément de `raw[key]`, qui peut être un tableau ou un objet seul.
-const items = (raw, key, path, convert) =>
-  Array.isArray(raw[key])
-    ? raw[key].map((item, i) => convert(item, [...path, key, i]))
-    : toArray(raw[key]).map((item) => convert(item, [...path, key]));
-
-function option(raw, path) {
-  if (!raw || typeof raw !== "object") return undefined;
-  const result = compact({
-    names: names(raw.name),
-    description: text(raw.description),
-    args: items(raw, "args", path, arg).filter(Boolean),
-    persistent: raw.isPersistent === true,
-    repeatable: raw.isRepeatable === true || typeof raw.isRepeatable === "number",
-    requires_equals: raw.requiresEquals === true || raw.requiresSeparator === true,
-    hidden: raw.hidden === true,
-    insert: insertValue(raw.insertValue),
-  });
-  return result.names ? result : undefined;
-}
-
-function command(raw, path) {
-  if (!raw || typeof raw !== "object") return undefined;
-  const result = compact({
-    names: names(raw.name),
-    description: text(raw.description),
-    subcommands: items(raw, "subcommands", path, command).filter(Boolean),
-    options: items(raw, "options", path, option).filter(Boolean),
-    args: items(raw, "args", path, arg).filter(Boolean),
-    hidden: raw.hidden === true,
-    insert: insertValue(raw.insertValue),
-  });
-  return result.names ? result : undefined;
-}
-
-const hasGenerators = (spec) =>
-  JSON.stringify(spec).includes('"generators":');
+const hasCode = (spec) => {
+  const json = JSON.stringify(spec);
+  return json.includes('"generators":') || json.includes('"generate":');
+};
 
 const root = resolve(process.argv[2] ?? "");
 const out = resolve(process.argv[3] ?? "specs");
+const build = join(root, "build");
 const { version } = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
+
+// Chemins des specs (sans `.js`), relatifs à `build`.
+function list(dir, prefix) {
+  const found = [];
+  for (const entry of readdirSync(join(build, dir), { withFileTypes: true })) {
+    if (entry.isDirectory()) {
+      if (SKIP_DIRS.has(entry.name)) continue;
+      found.push(...list(join(dir, entry.name), `${prefix}${entry.name}/`));
+    } else if (entry.name.endsWith(".js") && !SKIP.has(entry.name.slice(0, -3))) {
+      found.push(prefix + entry.name.slice(0, -3));
+    }
+  }
+  return found.sort();
+}
+
 const specs = [];
+const loadable = {};
 const modules = {};
-const commands = readdirSync(join(root, "build"))
-  .filter((file) => file.endsWith(".js"))
-  .map((file) => file.slice(0, -3))
-  .filter((name) => !SKIP.has(name))
-  .sort();
-for (const name of commands) {
-  const file = join(root, "build", `${name}.js`);
+for (const name of list("", "")) {
+  const file = join(build, `${name}.js`);
   const module = await import(pathToFileURL(file).href);
-  const spec = command(module.default, []);
+  // Les specs versionnées (`heroku/index`) et les fichiers d'aide
+  // (`deno/generators`) n'exportent pas d'objet.
+  const spec = typeof module.default === "object" ? convert(module.default) : undefined;
   if (!spec) {
-    console.error(`ignorée (spec dynamique) : ${name}`);
+    console.error(`ignorée (pas une spec statique) : ${name}`);
     continue;
   }
   OVERRIDES[name]?.(spec);
-  if (hasGenerators(spec)) {
+  if (hasCode(spec)) {
     spec.module = name;
     modules[name] = readFileSync(file, "utf8");
   }
-  specs.push(spec);
+  if (name.includes("/")) loadable[name] = spec;
+  else specs.push(spec);
 }
+
+// Les `loadSpec` vers une spec absente ne donnent rien : on les signale.
+const known = new Set([...Object.keys(loadable), ...specs.flatMap((s) => s.names)]);
+const missing = new Set();
+const check = (node) => {
+  if (!node || typeof node !== "object") return;
+  if (typeof node.load === "string" && !known.has(node.load)) missing.add(node.load);
+  for (const value of Object.values(node)) check(value);
+};
+check(specs);
+check(loadable);
+const skipped = [...missing].filter((m) => !SKIP_DIRS.has(m.split("/")[0]));
+if (skipped.length > 0) console.error(`loadSpec introuvables : ${skipped.join(", ")}`);
+
 const source = `@withfig/autocomplete@${version}`;
 const write = (file, value) =>
   writeFileSync(join(out, file), deflateSync(JSON.stringify(value), { level: 9 }));
 write("specs.json.z", { source, specs });
+write("loadable.json.z", { source, specs: loadable });
 write("modules.json.z", { source, modules });
-console.error(`${specs.length} specs exportées, ${Object.keys(modules).length} avec generators`);
+console.error(
+  `${specs.length} specs exportées (+ ${Object.keys(loadable).length} chargées par loadSpec), ` +
+    `${Object.keys(modules).length} avec du code JS`,
+);
