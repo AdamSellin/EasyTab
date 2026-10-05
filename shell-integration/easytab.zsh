@@ -4,6 +4,14 @@
 # après les thèmes de prompt.
 # Désactiver ponctuellement : EASYTAB_DISABLE=1 zsh
 
+# Rend `easytab` (update, config, doctor) accessible sans son chemin complet.
+__easytab_bin=__EASYTAB_TERM_BIN__
+if [[ "$__easytab_bin" == */* || "$__easytab_bin" == *\\* ]]; then
+  __easytab_bin=${__easytab_bin%[/\\]*}
+  [[ ":$PATH:" == *":$__easytab_bin:"* ]] || export PATH="$__easytab_bin:$PATH"
+fi
+unset __easytab_bin
+
 # 1. Hors d'EasyTab : relance ce shell sous le wrapper PTY.
 if [[ -z "$EASYTAB_TERM" && -z "$EASYTAB_DISABLE" && -o interactive && -t 0 && -t 1 ]] \
     && command -v __EASYTAB_TERM_BIN__ >/dev/null 2>&1; then

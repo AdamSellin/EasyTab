@@ -7,6 +7,12 @@
 
 $__easytab_term = __EASYTAB_TERM_BIN__
 
+# Rend `easytab` (update, config, doctor) accessible sans son chemin complet.
+$__easytab_bin = Split-Path -Parent $__easytab_term
+if ($__easytab_bin -and -not (($env:PATH -split [IO.Path]::PathSeparator) -contains $__easytab_bin)) {
+    $env:PATH = $__easytab_bin + [IO.Path]::PathSeparator + $env:PATH
+}
+
 # 1. Hors d'EasyTab : relance ce PowerShell sous le wrapper PTY, sauf s'il
 # execute une commande ou un script (-Command, -File sans -NoExit).
 if (-not $env:EASYTAB_TERM -and -not $env:EASYTAB_DISABLE -and $Host.Name -eq 'ConsoleHost' `

@@ -4,6 +4,18 @@
 # après les thèmes de prompt.
 # Désactiver ponctuellement : EASYTAB_DISABLE=1 bash
 
+# Rend `easytab` (update, config, doctor) accessible sans son chemin complet.
+__easytab_bin=__EASYTAB_TERM_BIN__
+if [[ "$__easytab_bin" == */* || "$__easytab_bin" == *\\* ]]; then
+  __easytab_bin=${__easytab_bin%[/\\]*}
+  # Git Bash : C:\Users\... devient /c/Users/...
+  if [[ -n "$MSYSTEM" ]] && command -v cygpath >/dev/null 2>&1; then
+    __easytab_bin=$(cygpath -u "$__easytab_bin")
+  fi
+  [[ ":$PATH:" == *":$__easytab_bin:"* ]] || export PATH="$__easytab_bin:$PATH"
+fi
+unset __easytab_bin
+
 # 1. Hors d'EasyTab : relance ce shell sous le wrapper PTY.
 if [[ -z "$EASYTAB_TERM" && -z "$EASYTAB_DISABLE" && $- == *i* && -t 0 && -t 1 ]] \
     && command -v __EASYTAB_TERM_BIN__ >/dev/null 2>&1; then

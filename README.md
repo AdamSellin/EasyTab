@@ -166,7 +166,9 @@ powershell -ExecutionPolicy Bypass -File scripts\install.ps1   # Windows
 ```
 
 Le script copie `easytab` et `easytab-term` dans `~/.easytab/bin` et ajoute EasyTab à la config
-du shell. Relancer la même commande met à jour. Ouvre ensuite un nouveau terminal.
+du shell, qui met aussi ce dossier dans le PATH : `easytab update`, `easytab config` et
+`easytab doctor` se tapent sans chemin. Relancer la même commande met à jour. Ouvre ensuite un
+nouveau terminal.
 
 Publier une version : `git tag v0.2.0 && git push origin v0.2.0`, ou « Run workflow » sur le
 workflow `Release` dans l'onglet Actions, avec le nom de la version. Le workflow `Release`
@@ -188,7 +190,7 @@ fenêtre flottante demande WebKitGTK : `sudo apt install libwebkit2gtk-4.1-dev l
 cargo build --release
 ./target/release/easytab install      # copie les programmes dans ~/.easytab/bin et ajoute un bloc à ~/.zshrc ou ~/.bashrc
 # ouvre un nouveau terminal, puis :
-easytab doctor                        # ou ~/.easytab/bin/easytab doctor
+easytab doctor                        # ~/.easytab/bin est ajouté au PATH par la config du shell
 ```
 
 Après une nouvelle compilation, relance `./target/release/easytab install` pour mettre à jour la
