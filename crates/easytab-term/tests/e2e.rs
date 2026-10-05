@@ -206,8 +206,17 @@ fn completes_git_checkout(term: &mut Terminal) {
         term.report()
     );
     // Échap ferme la liste sans rien insérer (l'option insérée finit par une
-    // espace, que `cursor_line` ne garde pas).
-    let line = term.cursor_line();
+    // espace, que `cursor_line` ne garde pas). PowerShell peut afficher
+    // l'option en plusieurs fois : on attend que la ligne ne bouge plus.
+    let mut line = term.cursor_line();
+    loop {
+        term.pump(Duration::from_millis(300));
+        let now = term.cursor_line();
+        if now == line {
+            break;
+        }
+        line = now;
+    }
     term.send(b"-");
     term.pump(Duration::from_millis(500));
     term.send(b"\x1b");
