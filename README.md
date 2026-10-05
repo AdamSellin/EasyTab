@@ -63,7 +63,7 @@ liste dès que le résultat arrive. La frappe n'attend jamais.
 |---|---|
 | `crates/easytab-core` | Suit l'état du shell (marqueurs de prompt `OSC 133`, dossier courant `OSC 7`, copie de l'écran) et transforme la ligne en cours en suggestions à partir des specs. |
 | `crates/easytab-term` | Wrapper PTY : lance le shell dans un pseudo-terminal, relaie clavier et écran, dessine la liste de suggestions. |
-| `crates/easytab-cli` | Commande `easytab` : `install`, `uninstall`, `doctor`, `init`. |
+| `crates/easytab-cli` | Commande `easytab` : `install`, `uninstall`, `update`, `config`, `doctor`, `init`. |
 | `shell-integration/` | Scripts zsh, bash et PowerShell qui relancent le shell sous `easytab-term` et émettent les marqueurs de prompt. |
 | `specs/` | Specs de complétion importées de Fig (voir [specs/README.md](specs/README.md)). |
 | `tools/` | Script d'import des specs Fig. |
@@ -81,6 +81,11 @@ curl -fsSL https://github.com/AdamSellin/EasyTab/releases/latest/download/instal
 # Windows (PowerShell et Git Bash, dans Windows Terminal ou VS Code)
 irm https://github.com/AdamSellin/EasyTab/releases/latest/download/install.ps1 | iex
 ```
+
+Ensuite, `easytab update` installe la dernière version publiée, pour les shells déjà configurés
+(dépôt privé : avec les identifiants GitHub de git, ou `GITHUB_TOKEN`). Les anciennes versions
+mises de côté par une mise à jour (`*.old-…` dans `~/.easytab/bin`) sont effacées au lancement
+suivant d'un terminal.
 
 Tant que le dépôt est privé, ces liens répondent 404 sans connexion à GitHub. Lance alors le
 script depuis un clone du dépôt : il télécharge la version publiée avec les identifiants GitHub

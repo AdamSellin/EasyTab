@@ -8,7 +8,7 @@ mod popup;
 
 use std::fs::{File, OpenOptions};
 use std::io::{self, IsTerminal, Read, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -123,6 +123,7 @@ fn main() -> Result<()> {
 }
 
 fn run(args: Args) -> Result<i32> {
+    remove_old_copies();
     let shell = args
         .shell
         .or_else(|| std::env::var("SHELL").ok())
@@ -478,6 +479,30 @@ fn default_shell() -> String {
         "powershell.exe".into()
     } else {
         "/bin/sh".into()
+    }
+}
+
+/// Une mise à jour faite pendant qu'un terminal tournait a mis l'ancienne
+/// version de côté (`easytab-term.exe.old-1234`, verrouillé sous Windows tant
+/// qu'il tourne). On l'efface dès que plus rien ne l'utilise.
+fn remove_old_copies() {
+    let Some(dir) = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(PathBuf::from))
+    else {
+        return;
+    };
+    // Seulement dans le dossier d'installation, pas dans celui de compilation.
+    if !dir.ends_with(Path::new(".easytab").join("bin")) {
+        return;
+    }
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        if entry.file_name().to_string_lossy().contains(".old-") {
+            let _ = std::fs::remove_file(entry.path());
+        }
     }
 }
 

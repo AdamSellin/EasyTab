@@ -5,6 +5,7 @@
 #[allow(dead_code)]
 mod config;
 mod rc;
+mod update;
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -39,6 +40,12 @@ enum Command {
     Doctor,
     /// Crée le fichier de réglages s'il n'existe pas, et affiche son chemin
     Config,
+    /// Installe la dernière version publiée
+    Update {
+        /// Réinstalle même si la version est déjà la dernière
+        #[arg(long)]
+        force: bool,
+    },
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -132,8 +139,23 @@ fn main() -> Result<()> {
         Command::Uninstall { shell } => uninstall(shell.map_or_else(Shell::detect, Ok)?)?,
         Command::Doctor => doctor()?,
         Command::Config => edit_config()?,
+        Command::Update { force } => update(force)?,
     }
     Ok(())
+}
+
+/// Met à jour en gardant les shells déjà configurés.
+fn update(force: bool) -> Result<()> {
+    let mut installed = Vec::new();
+    for shell in Shell::ALL {
+        for path in shell.rc_files()? {
+            if rc::has_block(&read_or_empty(&path)?) {
+                installed.push(shell.name());
+                break;
+            }
+        }
+    }
+    update::run(force, &installed)
 }
 
 fn init_script(shell: Shell) -> Result<String> {
