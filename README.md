@@ -76,8 +76,12 @@ Quelques valeurs propres au projet sont lues directement dans ses fichiers, sans
 commande (donc aussi sous Windows sans `bash`) : les cibles du `Makefile` pour `make` (avec leur
 commentaire `## …` comme description), les scripts de `composer.json` pour
 `composer run-script` / `composer run`, et les projets de `angular.json` pour `ng build`,
-`ng serve`, `ng test`… Les fichiers sont relus quand ils changent. Les scripts npm, yarn et pnpm,
-les services de `docker compose` et les hôtes de `~/.ssh/config` viennent des specs Fig.
+`ng serve`, `ng test`…, les scripts de `package.json` (cherché aussi dans les dossiers parents)
+pour `npm run`, `yarn` / `yarn run`, `pnpm` / `pnpm run` et `bun run`, et les hôtes SSH pour
+`ssh`, `sftp` et `scp` (`hôte:`) : lignes `Host` de `~/.ssh/config` (et des fichiers de ses
+`Include`, hors motifs `*`) et hôtes de `~/.ssh/known_hosts` (hors entrées hachées). Après
+`user@`, seul l'hôte est complété. Les fichiers sont relus quand ils changent. Les services de
+`docker compose` viennent des specs Fig.
 
 Pour une commande installée qui n'a pas de spec, EasyTab lance une fois `commande --help` en
 arrière-plan (3 secondes au plus, depuis le dossier temporaire) et en tire ses options

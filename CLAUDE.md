@@ -33,8 +33,9 @@ cargo test
   va aussi dans `TEMPLATE` et dans le README.
 - Ordre des specs d'une commande (`Completer::complete_words`) : `~/.easytab/specs` (`spec::custom`),
   puis Fig, puis PowerShell (`pwsh.rs`), puis `--help` (`help.rs`). Valeurs lues dans les fichiers
-  du projet (Makefile, composer.json, angular.json) : `project.rs`, seulement là où les
-  generators Fig ne font rien ou demandent `bash`/`cat`.
+  du projet ou de l'utilisateur (Makefile, composer.json, angular.json, package.json,
+  `~/.ssh/config` et `known_hosts`) : `project.rs`, seulement là où les generators Fig ne font
+  rien ou demandent `bash`/`cat` ; leurs doublons sont écartés.
 
 ## Conventions
 

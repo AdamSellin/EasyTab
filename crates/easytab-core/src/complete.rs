@@ -2,7 +2,7 @@
 //! déjà tapés, puis propose ce qui peut venir à la place du mot en cours.
 
 use std::collections::{HashMap, HashSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
 use crate::exec;
@@ -79,6 +79,8 @@ pub struct Completer {
     generators: Generators,
     usage: Mutex<Usage>,
     history: Mutex<History>,
+    /// Dossier de l'utilisateur (`~/.ssh/config`…).
+    home: Option<PathBuf>,
 }
 
 /// Ce que les generators ont besoin de savoir sur la ligne.
@@ -133,6 +135,9 @@ impl Completer {
             generators: Generators::disabled(),
             usage: Mutex::default(),
             history: Mutex::default(),
+            home: std::env::var_os("HOME")
+                .or_else(|| std::env::var_os("USERPROFILE"))
+                .map(PathBuf::from),
         }
     }
 
@@ -202,6 +207,13 @@ impl Completer {
             .map(|(path, command)| (path, Spec::from(command)))
             .collect();
         let _ = self.loadable.set(loadable);
+        self
+    }
+
+    /// Prend `home` comme dossier de l'utilisateur.
+    #[cfg(test)]
+    fn with_home(mut self, home: PathBuf) -> Self {
+        self.home = Some(home);
         self
     }
 
@@ -447,16 +459,26 @@ impl Completer {
         }
         // Valeurs lues dans les fichiers du projet (cibles make…), avant celles
         // des generators : les doublons de ces derniers sont écartés.
-        if let Some(source) = project::source(&context.path, &positionals) {
-            let items = project::items(source, context.cwd, &context.tokens);
-            push_generated(&items, &Generator::default(), prefix, "", out);
+        let source = project::source(&context.path, &positionals);
+        let native = out.len()..;
+        if let Some(source) = source {
+            let items = project::items(source, context.cwd, self.home.as_deref(), &context.tokens);
+            let generator = Generator {
+                query_term: source.query_term().map(str::to_string),
+                ..Generator::default()
+            };
+            push_generated(&items, &generator, prefix, "", out);
         }
+        let native = native.start..out.len();
         if let Some(arg) = node.args.get(positional) {
             if arg.is_command {
                 self.push_commands(prefix, out);
             } else {
                 self.push_arg(arg, prefix, "", context, out);
             }
+        }
+        if let Some(project::Source::SshHosts { .. }) = source {
+            drop_host_duplicates(out, native);
         }
         // Les options ne servent qu'à défaut d'autre chose : pas pendant que des
         // generators calculent.
@@ -720,6 +742,30 @@ fn push_generated(
     }
 }
 
+/// Hôtes SSH : `native` (lus dans `~/.ssh`) passent avant ceux des
+/// generators Fig, qui sont écartés s'ils insèrent la même chose (`marc@hôte`
+/// sous une autre étiquette) ou la même chose sans `:` (`scp`). Après un `:`,
+/// pas d'espace : le chemin suit.
+fn drop_host_duplicates(out: &mut Vec<Suggestion>, native: std::ops::Range<usize>) {
+    let inserted: HashSet<String> = out[native.clone()]
+        .iter()
+        .map(|s| s.insert.clone())
+        .collect();
+    for suggestion in &mut out[native.clone()] {
+        if suggestion.insert.ends_with(':') {
+            suggestion.append_space = false;
+        }
+    }
+    let mut index = 0;
+    out.retain(|s| {
+        let duplicate = index >= native.end
+            && s.kind == Kind::Dynamic
+            && (inserted.contains(&s.insert) || inserted.contains(&format!("{}:", s.insert)));
+        index += 1;
+        !duplicate
+    });
+}
+
 /// Retire le marqueur `{cursor}` des valeurs à insérer de Fig.
 fn strip_cursor(insert: &str) -> String {
     match insert.find("{cursor") {
@@ -740,7 +786,6 @@ fn sort(found: &mut [Suggestion]) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
 
     fn completer() -> &'static Completer {
         use std::sync::OnceLock;
@@ -1178,6 +1223,149 @@ mod tests {
         let unique: HashSet<_> = found.iter().collect();
         assert_eq!(unique.len(), found.len(), "{found:?}");
         assert!(found.starts_with(&["build", "test"]), "{found:?}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn suggests_package_scripts() {
+        let dir = temp_dir("package");
+        std::fs::create_dir_all(dir.join("src")).unwrap();
+        std::fs::write(
+            dir.join("package.json"),
+            r#"{"scripts": {"build": "vite build", "test": "vitest"}}"#,
+        )
+        .unwrap();
+        let src = dir.join("src");
+        let found = |input: &str| -> Vec<String> {
+            completer()
+                .complete(input, &src)
+                .suggestions
+                .into_iter()
+                .map(|s| s.label)
+                .collect()
+        };
+        for input in [
+            "npm run ",
+            "npm run-script ",
+            "yarn run ",
+            "pnpm run ",
+            "bun run ",
+        ] {
+            assert_eq!(found(input), ["build", "test"], "{input}");
+        }
+        // `yarn <script>`, `pnpm <script>` : avec les sous-commandes.
+        assert!(found("yarn bui").contains(&"build".to_string()));
+        assert!(found("pnpm ").contains(&"test".to_string()));
+        let completion = completer().complete("npm run t", &src);
+        assert_eq!(completion.suggestions[0].kind, Kind::Dynamic);
+        assert_eq!(
+            completion.suggestions[0].description.as_deref(),
+            Some("vitest")
+        );
+        // Le script choisi, la suite n'en est plus un.
+        assert!(!found("npm run build ").contains(&"test".to_string()));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn suggests_ssh_hosts() {
+        let home = temp_dir("ssh-hosts");
+        std::fs::create_dir_all(home.join(".ssh")).unwrap();
+        std::fs::write(
+            home.join(".ssh/config"),
+            "Host prod\n\tHostName 10.0.0.1\nHost *\n\tUser marc\n",
+        )
+        .unwrap();
+        std::fs::write(
+            home.join(".ssh/known_hosts"),
+            "github.com ssh-ed25519 AAAA\n",
+        )
+        .unwrap();
+        let completer = Completer::builtin().with_home(home.clone());
+        let complete = |input: &str| completer.complete(input, &home).suggestions;
+        let found =
+            |input: &str| -> Vec<String> { complete(input).into_iter().map(|s| s.label).collect() };
+        assert_eq!(found("ssh "), ["prod", "github.com"]);
+        assert_eq!(found("sftp pr"), ["prod"]);
+        assert_eq!(
+            complete("ssh pr")[0].description.as_deref(),
+            Some("10.0.0.1")
+        );
+        // Après `user@`, seul le nom d'hôte est complété.
+        let found_at = complete("ssh marc@pr");
+        assert_eq!(found_at[0].label, "prod");
+        assert_eq!(found_at[0].insert, "marc@prod");
+        // scp : `hôte:`, sans espace après, pour chaque argument.
+        let scp = complete("scp fichier.txt pr");
+        assert_eq!(scp[0].label, "prod:");
+        assert_eq!(scp[0].insert, "prod:");
+        assert!(!scp[0].append_space);
+        assert!(!found("scp prod:").contains(&"prod:".to_string()));
+        // Après l'hôte vient la commande.
+        assert!(!found("ssh prod ").contains(&"github.com".to_string()));
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn drops_ssh_hosts_of_generators_already_read() {
+        let suggestion = |label: &str, insert: &str, kind: Kind| Suggestion {
+            label: label.to_string(),
+            insert: insert.to_string(),
+            description: None,
+            hint: None,
+            icon: None,
+            kind,
+            append_space: true,
+            rank: 0,
+        };
+        let mut out = vec![
+            suggestion("-v", "-v", Kind::Option),
+            suggestion("prod:", "prod:", Kind::Dynamic),
+            suggestion("marc@gh", "marc@gh", Kind::Dynamic),
+            // Ceux du generator Fig.
+            suggestion("prod", "prod", Kind::Dynamic),
+            suggestion("gh", "marc@gh", Kind::Dynamic),
+            suggestion("autre", "autre", Kind::Dynamic),
+            suggestion("prod", "prod", Kind::File),
+        ];
+        drop_host_duplicates(&mut out, 1..3);
+        let labels: Vec<_> = out.iter().map(|s| s.label.as_str()).collect();
+        assert_eq!(labels, ["-v", "prod:", "marc@gh", "autre", "prod"]);
+        assert!(!out[1].append_space);
+        assert!(out[2].append_space);
+    }
+
+    /// Les scripts lus dans package.json et ceux du generator de la spec Fig
+    /// ne sont pas proposés deux fois.
+    #[cfg(unix)]
+    #[test]
+    fn package_scripts_are_not_duplicated_by_generators() {
+        use std::sync::mpsc;
+
+        let dir = temp_dir("npm");
+        std::fs::write(
+            dir.join("package.json"),
+            r#"{"scripts": {"build": "vite build", "test": "vitest"}}"#,
+        )
+        .unwrap();
+        let (ready, notified) = mpsc::channel();
+        let completer = Completer::builtin().with_generators(Generators::start(move || {
+            let _ = ready.send(());
+        }));
+        for input in ["npm run ", "yarn run ", "pnpm run "] {
+            let first = completer.complete(input, &dir);
+            let found: Vec<_> = first.suggestions.iter().map(|s| s.label.as_str()).collect();
+            assert!(found.starts_with(&["build", "test"]), "{input} {found:?}");
+            let settled = settle(&completer, &notified, input, &dir);
+            let found: Vec<_> = settled
+                .suggestions
+                .iter()
+                .map(|s| s.label.as_str())
+                .collect();
+            let unique: HashSet<_> = found.iter().collect();
+            assert_eq!(unique.len(), found.len(), "{input} {found:?}");
+            assert!(found.starts_with(&["build", "test"]), "{input} {found:?}");
+        }
         let _ = std::fs::remove_dir_all(&dir);
     }
 
