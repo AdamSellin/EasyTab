@@ -3,6 +3,7 @@
 //! `tools/import-fig-specs.mjs` à partir des specs Fig.
 
 use std::collections::HashMap;
+use std::path::Path;
 use std::sync::OnceLock;
 
 use serde::{Deserialize, Serialize};
@@ -217,6 +218,50 @@ pub fn loadable() -> HashMap<String, Spec> {
         .collect()
 }
 
+/// Specs de l'utilisateur : les fichiers `*.json` de `dir`
+/// (`~/.easytab/specs`), au format des specs embarquées. Un fichier contient
+/// une spec, un tableau de specs ou `{"specs": [...]}`. Les fichiers
+/// invalides sont ignorés, avec leur erreur (nom du fichier compris).
+pub fn custom(dir: &Path) -> (Vec<Spec>, Vec<String>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Default::default();
+    };
+    let mut files: Vec<_> = entries
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().is_some_and(|ext| ext == "json"))
+        .collect();
+    files.sort();
+    let mut specs = Vec::new();
+    let mut errors = Vec::new();
+    for file in files {
+        match read_custom(&file) {
+            Ok(found) => specs.extend(found.into_iter().map(Spec::from)),
+            Err(e) => errors.push(format!("{} : {e}", file.display())),
+        }
+    }
+    (specs, errors)
+}
+
+fn read_custom(file: &Path) -> Result<Vec<Command>, String> {
+    let text = std::fs::read_to_string(file).map_err(|e| e.to_string())?;
+    let mut value: serde_json::Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
+    if let Some(specs) = value.get_mut("specs") {
+        value = specs.take();
+    }
+    let commands = if value.is_array() {
+        serde_json::from_value(value)
+    } else {
+        serde_json::from_value(value).map(|one: Command| vec![one])
+    }
+    .map_err(|e| e.to_string())?;
+    // Une spec sans `names` (faute de frappe : `name`) ne servirait à rien.
+    match commands.iter().find(|c| c.names.is_empty()) {
+        Some(_) => Err("spec sans « names »".to_string()),
+        None => Ok(commands),
+    }
+}
+
 fn inflate(data: &[u8]) -> Vec<u8> {
     miniz_oxide::inflate::decompress_to_vec_zlib(data).expect("specs embarquées illisibles")
 }
@@ -268,6 +313,55 @@ mod tests {
         assert_eq!(options, ["--verbose", "-q"]);
         assert_eq!(spec.args[0].name.as_deref(), Some("générée"));
         assert_eq!(spec.description.as_deref(), Some("statique"));
+    }
+
+    #[test]
+    fn reads_custom_specs() {
+        let dir = std::env::temp_dir().join(format!("easytab-specs-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("a.json"),
+            r#"{"names": ["deploy"], "description": "Déploie",
+                "subcommands": [{"names": ["prod"]}],
+                "options": [{"names": ["--force"]}],
+                "args": [{"name": "env", "suggestions": [{"names": ["staging"]}]}]}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("b.json"),
+            r#"[{"names": ["b1"]}, {"names": ["b2"]}]"#,
+        )
+        .unwrap();
+        std::fs::write(dir.join("c.json"), r#"{"specs": [{"names": ["c"]}]}"#).unwrap();
+        std::fs::write(dir.join("faux.json"), r#"{"name": "oubli-du-s"}"#).unwrap();
+        std::fs::write(dir.join("casse.json"), "{").unwrap();
+        std::fs::write(dir.join("notes.txt"), "pas une spec").unwrap();
+
+        let (specs, errors) = custom(&dir);
+        let names: Vec<&str> = specs.iter().map(|s| s.names[0].as_str()).collect();
+        assert_eq!(names, ["deploy", "b1", "b2", "c"]);
+        let deploy = specs[0].command();
+        assert_eq!(deploy.subcommands[0].names, ["prod"]);
+        assert_eq!(deploy.args[0].suggestions[0].names, ["staging"]);
+        assert_eq!(errors.len(), 2, "{errors:?}");
+        assert!(errors.iter().any(|e| e.contains("faux.json")));
+        assert!(custom(&dir.join("absent")).0.is_empty());
+
+        // L'exemple du README est valide.
+        let readme = include_str!("../../../README.md");
+        let example = readme
+            .split("### Specs personnelles")
+            .nth(1)
+            .and_then(|s| s.split("```json").nth(1))
+            .and_then(|s| s.split("```").next())
+            .expect("exemple de spec dans le README");
+        std::fs::write(dir.join("a.json"), example).unwrap();
+        let (specs, _) = custom(&dir);
+        let deploy = specs[0].command();
+        assert_eq!(deploy.subcommands[0].args[0].suggestions[1].names, ["prod"]);
+        assert_eq!(deploy.options[1].args[0].templates, [Template::Filepaths]);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

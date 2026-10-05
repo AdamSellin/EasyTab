@@ -297,6 +297,29 @@ fn bash_suggests_history() {
     });
 }
 
+/// `make ` propose les cibles du Makefile du dossier courant.
+#[cfg(target_os = "linux")]
+#[test]
+fn bash_suggests_make_targets() {
+    let Some(mut term) = start_bash("bash-make", |home| {
+        std::fs::write(
+            home.join("Makefile"),
+            "easytab-cible: ## Cible de test\n\ttrue\n",
+        )
+        .unwrap();
+    }) else {
+        return;
+    };
+    term.send(b"make easytab-c");
+    term.wait_for("la cible du Makefile", |t| {
+        t.screen().contains("Cible de test")
+    });
+    term.send(b"\t");
+    term.wait_for("la ligne complétée", |t| {
+        t.cursor_line() == "$ make easytab-cible"
+    });
+}
+
 /// bash : celui du système sous Linux, Git Bash sous Windows (`None` s'il
 /// est absent). `prepare` remplit le dossier personnel avant le lancement.
 fn start_bash(name: &str, prepare: impl FnOnce(&Path)) -> Option<Terminal> {

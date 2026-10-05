@@ -114,6 +114,11 @@ fn find_program(program: &str) -> Option<PathBuf> {
     found
 }
 
+/// Chemin du programme `program` dans le PATH (avec son extension sous Windows).
+pub(crate) fn find_in_path(program: &str) -> Option<PathBuf> {
+    search_path(program)
+}
+
 fn search_path(program: &str) -> Option<PathBuf> {
     let path = std::env::var_os("PATH")?;
     let mut extensions = executable_extensions();

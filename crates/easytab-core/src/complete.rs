@@ -8,8 +8,10 @@ use std::sync::{Mutex, OnceLock};
 use crate::exec;
 use crate::files;
 use crate::generators::{Generated, Generators, Item};
+use crate::help::HelpSpecs;
 use crate::history::History;
 use crate::line::{self, Token};
+use crate::project;
 use crate::pwsh::PowerShell;
 use crate::rank::{self, best_match, Usage};
 use crate::spec::{self, Arg, Command, Generator, Opt, Spec, Template};
@@ -65,6 +67,10 @@ pub struct Completer {
     installed: Option<OnceLock<HashSet<String>>>,
     /// Le shell est PowerShell : ses commandes sont décrites par lui-même.
     powershell: Option<PowerShell>,
+    /// Les commandes sans spec sont décrites par leur `--help`.
+    help: Option<HelpSpecs>,
+    /// Les specs à partir de cet indice sont celles de l'utilisateur.
+    custom_from: usize,
     by_name: HashMap<String, usize>,
     /// Specs chargées par `loadSpec` (`php/bin-console`), par chemin : lues à la
     /// première utilisation (voir [`spec::loadable`]).
@@ -82,6 +88,8 @@ struct Context<'a> {
     tokens: Vec<String>,
     /// Module JS de la spec en cours.
     module: Option<String>,
+    /// La commande puis les sous-commandes suivies (`["composer", "run-script"]`).
+    path: Vec<String>,
     /// Des generators calculent encore des suggestions.
     pending: bool,
     /// Un `generateSpec` calcule encore une partie de la spec.
@@ -117,6 +125,8 @@ impl Completer {
             commands,
             installed: None,
             powershell: None,
+            help: None,
+            custom_from: usize::MAX,
             by_name,
             loadable: OnceLock::new(),
             builtin_loadable: false,
@@ -165,6 +175,26 @@ impl Completer {
         self
     }
 
+    /// Ajoute les specs de l'utilisateur (`~/.easytab/specs`) : elles passent
+    /// avant les specs embarquées de même nom, et sont proposées même si la
+    /// commande n'est pas dans le PATH (fonction ou alias du shell).
+    pub fn with_custom(mut self, specs: Vec<Spec>) -> Self {
+        self.custom_from = self.commands.len();
+        for spec in specs {
+            for name in &spec.names {
+                self.by_name.insert(name.clone(), self.commands.len());
+            }
+            self.commands.push(spec);
+        }
+        self
+    }
+
+    /// Lit les options des commandes sans spec dans leur `--help`.
+    pub fn with_help(mut self, help: HelpSpecs) -> Self {
+        self.help = Some(help);
+        self
+    }
+
     /// Specs que les autres chargent par `loadSpec`, par chemin.
     pub fn with_loadable(self, loadable: HashMap<String, Command>) -> Self {
         let loadable = loadable
@@ -188,6 +218,7 @@ impl Completer {
             cwd,
             tokens: Vec::new(),
             module: None,
+            path: Vec::new(),
             pending: false,
             generating: false,
         };
@@ -271,14 +302,20 @@ impl Completer {
             self.push_commands(&current.value, out);
             return;
         };
-        let Some(spec) = self.find(&name.value).or_else(|| {
-            self.powershell
-                .as_ref()
-                .and_then(|powershell| powershell.spec(&name.value))
-        }) else {
+        // Une spec de l'utilisateur ou embarquée, sinon PowerShell, sinon `--help`.
+        let Some(spec) = self
+            .find(&name.value)
+            .or_else(|| {
+                self.powershell
+                    .as_ref()
+                    .and_then(|powershell| powershell.spec(&name.value))
+            })
+            .or_else(|| self.help.as_ref().and_then(|help| help.spec(&name.value)))
+        else {
             return;
         };
         context.module = spec.module.clone();
+        context.path = spec.names.first().cloned().into_iter().collect();
         context.tokens = words
             .iter()
             .chain([current])
@@ -336,6 +373,8 @@ impl Completer {
             .extend(node.options.iter().filter(|o| o.persistent));
         let mut positional = 0;
         let mut seen_positional = false;
+        // Mots qui ne sont ni des options ni leurs valeurs.
+        let mut positionals: Vec<&str> = Vec::new();
         let mut pending: Option<&Arg> = None;
 
         for (i, word) in rest.iter().enumerate() {
@@ -361,10 +400,12 @@ impl Completer {
             }
             if !seen_positional {
                 if let Some(sub) = find_subcommand(node, word) {
+                    context.path.extend(sub.names.first().cloned());
                     return self.enter(sub, &rest[i + 1..], walk, context, out);
                 }
             }
             seen_positional = true;
+            positionals.push(word);
             if let Some(arg) = node.args.get(positional) {
                 if arg.is_command {
                     // `sudo git ch` : on recommence avec la commande imbriquée.
@@ -404,6 +445,12 @@ impl Completer {
         if !seen_positional {
             push_subcommands(node, prefix, out);
         }
+        // Valeurs lues dans les fichiers du projet (cibles make…), avant celles
+        // des generators : les doublons de ces derniers sont écartés.
+        if let Some(source) = project::source(&context.path, &positionals) {
+            let items = project::items(source, context.cwd, &context.tokens);
+            push_generated(&items, &Generator::default(), prefix, "", out);
+        }
         if let Some(arg) = node.args.get(positional) {
             if arg.is_command {
                 self.push_commands(prefix, out);
@@ -429,9 +476,15 @@ impl Completer {
         let mut found: Vec<Suggestion> = self
             .commands
             .iter()
-            .flat_map(|c| c.names.iter().map(move |n| (n, c)))
-            .filter(|(name, _)| installed.is_none_or(|set| set.contains(name.as_str())))
-            .filter_map(|(name, command)| {
+            .enumerate()
+            .flat_map(|(i, c)| c.names.iter().map(move |n| (i, n, c)))
+            // Une spec embarquée remplacée par celle de l'utilisateur n'est pas
+            // proposée.
+            .filter(|(i, name, _)| self.by_name.get(name.as_str()) == Some(i))
+            .filter(|(i, name, _)| {
+                *i >= self.custom_from || installed.is_none_or(|set| set.contains(name.as_str()))
+            })
+            .filter_map(|(_, name, command)| {
                 Some(Suggestion {
                     rank: rank::match_rank(name, prefix)?,
                     label: name.clone(),
@@ -1021,6 +1074,151 @@ mod tests {
         // `php/bin-console` lance à son tour `php bin/console list` : sans PHP
         // ici, il ne donne rien, mais le calcul se termine.
         settle(&completer, &notified, "php bin/console ", &dir);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn temp_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("easytab-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn suggests_project_values() {
+        let dir = temp_dir("projet");
+        std::fs::write(
+            dir.join("Makefile"),
+            "build: ## Compile\n\tcc\ntest: build\n\tcc\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("composer.json"),
+            r#"{"scripts": {"lint": "phpcs", "test": "phpunit"}}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("angular.json"),
+            r#"{"projects": {"boutique": {"projectType": "application"}}}"#,
+        )
+        .unwrap();
+        let found = |input: &str| -> Vec<String> {
+            completer()
+                .complete(input, &dir)
+                .suggestions
+                .into_iter()
+                .map(|s| s.label)
+                .collect()
+        };
+        assert_eq!(found("make "), ["build", "test"]);
+        assert_eq!(found("make -k te"), ["test"]);
+        let completion = completer().complete("make b", &dir);
+        assert_eq!(completion.suggestions[0].kind, Kind::Dynamic);
+        assert_eq!(
+            completion.suggestions[0].description.as_deref(),
+            Some("Compile")
+        );
+        assert_eq!(found("composer run-script "), ["lint", "test"]);
+        assert_eq!(found("composer run l"), ["lint"]);
+        assert_eq!(found("ng build "), ["boutique"]);
+        assert!(!found("ng new ").contains(&"boutique".to_string()));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Les cibles lues dans le Makefile et celles du generator de la spec Fig
+    /// (`make -qp`) ne sont pas proposées deux fois.
+    #[cfg(unix)]
+    #[test]
+    fn make_targets_are_not_duplicated_by_generators() {
+        use std::sync::mpsc;
+
+        let dir = temp_dir("make");
+        std::fs::write(
+            dir.join("Makefile"),
+            "build:\n\ttrue\ntest: build\n\ttrue\n",
+        )
+        .unwrap();
+        let (ready, notified) = mpsc::channel();
+        let completer = Completer::builtin().with_generators(Generators::start(move || {
+            let _ = ready.send(());
+        }));
+        // Tout de suite, avant le generator.
+        let first = completer.complete("make ", &dir);
+        let found: Vec<_> = first.suggestions.iter().map(|s| s.label.as_str()).collect();
+        assert_eq!(found, ["build", "test"]);
+        let settled = settle(&completer, &notified, "make ", &dir);
+        let found: Vec<_> = settled
+            .suggestions
+            .iter()
+            .map(|s| s.label.as_str())
+            .collect();
+        let unique: HashSet<_> = found.iter().collect();
+        assert_eq!(unique.len(), found.len(), "{found:?}");
+        assert!(found.starts_with(&["build", "test"]), "{found:?}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn custom_specs_replace_builtin_ones() {
+        let custom = |json: &str| Spec::from(command(json));
+        let completer = Completer::new(vec![
+            command(r#"{"names": ["outil"], "subcommands": [{"names": ["integree"]}]}"#),
+            command(r#"{"names": ["autre"], "subcommands": [{"names": ["garde"]}]}"#),
+        ])
+        .with_custom(vec![
+            custom(r#"{"names": ["outil"], "description": "à moi", "subcommands": [{"names": ["perso"]}]}"#),
+            custom(r#"{"names": ["nouveau"]}"#),
+        ]);
+        assert_eq!(labels_of(&completer, "outil "), ["perso"]);
+        assert_eq!(labels_of(&completer, "autre "), ["garde"]);
+        // Une seule fois dans les commandes, avec la description de l'utilisateur.
+        let found = completer.complete("outi", Path::new("/")).suggestions;
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].description.as_deref(), Some("à moi"));
+        assert_eq!(labels_of(&completer, "nouv"), ["nouveau"]);
+        // Les commandes de l'utilisateur sont proposées même hors du PATH.
+        let completer = Completer::builtin().with_custom(vec![custom(
+            r#"{"names": ["easytab-perso"], "options": [{"names": ["--perso"]}]}"#,
+        )]);
+        assert_eq!(labels_of(&completer, "easytab-pers"), ["easytab-perso"]);
+        assert_eq!(labels_of(&completer, "easytab-perso --"), ["--perso"]);
+    }
+
+    /// `--help` ne sert qu'aux commandes sans spec.
+    #[cfg(unix)]
+    #[test]
+    fn help_is_a_fallback_for_commands_without_spec() {
+        use std::os::unix::fs::PermissionsExt;
+        use std::sync::mpsc;
+
+        let dir = temp_dir("aide");
+        for name in ["git", "easytab-sans-spec"] {
+            let path = dir.join(name);
+            std::fs::write(
+                &path,
+                "#!/bin/sh\necho '  -a, --aide-lue  lue'\necho '  -b  autre'\n",
+            )
+            .unwrap();
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let (ready, notified) = mpsc::channel();
+        let completer =
+            Completer::builtin().with_help(HelpSpecs::in_dirs(vec![dir.clone()], move || {
+                let _ = ready.send(());
+            }));
+        // `git` a une spec : son `--help` n'est pas lu.
+        let found = labels_of(&completer, "git --aide");
+        assert!(!found.contains(&"-a, --aide-lue".to_string()), "{found:?}");
+        assert!(notified.try_recv().is_err());
+
+        assert!(labels_of(&completer, "easytab-sans-spec --").is_empty());
+        notified
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .unwrap();
+        assert_eq!(
+            labels_of(&completer, "easytab-sans-spec --aide"),
+            ["-a, --aide-lue"]
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

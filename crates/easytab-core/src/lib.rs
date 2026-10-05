@@ -8,16 +8,21 @@
 //!   complétion (format Fig).
 //! - [`Generators`] calcule en arrière-plan les suggestions dynamiques (branches
 //!   git, scripts npm…) en exécutant le JavaScript des specs.
+//! - Sans spec, les options d'une commande sont lues dans son `--help`
+//!   ([`HelpSpecs`]) ; les specs de `~/.easytab/specs` passent avant celles
+//!   embarquées ([`spec::custom`]).
 
 mod complete;
 pub mod config;
 mod exec;
 mod files;
 mod generators;
+pub mod help;
 pub mod history;
 pub mod line;
 mod osc;
 pub mod overlay;
+mod project;
 pub mod pwsh;
 mod rank;
 mod session;
@@ -26,6 +31,7 @@ pub mod spec;
 pub use complete::{Completer, Completion, Kind, Suggestion};
 pub use config::Config;
 pub use generators::Generators;
+pub use help::HelpSpecs;
 pub use history::History;
 pub use osc::{Marker, OscScanner};
 pub use pwsh::PowerShell;

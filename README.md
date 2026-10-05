@@ -50,6 +50,7 @@ overlay = true      # fenêtre flottante, ou false pour la liste dans le termina
 theme = "dark"      # ou "light"
 icons = "badges"    # ou "emoji" (liste dans le terminal)
 history = true      # proposer les commandes déjà tapées
+help = true         # commandes sans spec : options lues dans « commande --help »
 
 [keys]
 enter_inserts = true  # false : Entrée lance toujours la commande, seul Tab insère
@@ -70,6 +71,53 @@ passe sa sortie au JavaScript de la spec dans un moteur JS embarqué (QuickJS), 
 liste dès que le résultat arrive. La frappe n'attend jamais. Certaines specs calculent ainsi une
 partie de leurs sous-commandes (`generateSpec` de Fig : les commandes de `composer`, celles de
 `php bin/console` dans un projet Symfony…) ; le résultat est gardé une minute par dossier.
+
+Quelques valeurs propres au projet sont lues directement dans ses fichiers, sans lancer de
+commande (donc aussi sous Windows sans `bash`) : les cibles du `Makefile` pour `make` (avec leur
+commentaire `## …` comme description), les scripts de `composer.json` pour
+`composer run-script` / `composer run`, et les projets de `angular.json` pour `ng build`,
+`ng serve`, `ng test`… Les fichiers sont relus quand ils changent. Les scripts npm, yarn et pnpm,
+les services de `docker compose` et les hôtes de `~/.ssh/config` viennent des specs Fig.
+
+Pour une commande installée qui n'a pas de spec, EasyTab lance une fois `commande --help` en
+arrière-plan (3 secondes au plus, depuis le dossier temporaire) et en tire ses options
+(`-x, --option=VALEUR  description`). La réponse est gardée dans `~/.easytab/cache/help.json`
+tant que le programme ne change pas. Seules les commandes du PATH sont interrogées, jamais
+`rm`, `dd`, `shutdown`, `reboot`, `halt`, `poweroff`, `mkfs`, `format`, ni les scripts
+`.bat` / `.cmd` sous Windows ; une sortie qui ne ressemble pas à une aide (code de sortie autre
+que 0 ou 1, moins de deux options) est ignorée. `help = false` dans les réglages le désactive.
+
+### Specs personnelles
+
+Les fichiers `~/.easytab/specs/*.json` décrivent des commandes en plus de celles de Fig, ou à
+leur place : une spec de même nom remplace la spec embarquée. Une commande décrite ainsi est
+proposée même si elle n'est pas dans le PATH (fonction ou alias du shell). Les fichiers sont lus
+à l'ouverture du terminal ; une erreur est notée dans le journal (`EASYTAB_LOG`).
+
+Le format est celui des specs embarquées (specs Fig converties) : `names` (toujours un tableau),
+`description`, `subcommands`, `options` et `args`. Un argument peut avoir des `suggestions`
+(`{"names": [...], "description": ...}`), des `templates` (`"filepaths"`, `"folders"`), être
+`optional`, `variadic` ou `is_command` ; une option peut être `persistent` (valable dans les
+sous-commandes) ou `requires_equals` (`--opt=valeur`) ; `"load": "git"` reprend une autre spec.
+Un fichier contient une spec, ou un tableau de specs.
+
+```json
+{
+  "names": ["deploy"],
+  "description": "Déploie l'application",
+  "subcommands": [
+    {
+      "names": ["app", "a"],
+      "description": "Déploie l'application web",
+      "args": [{ "name": "env", "suggestions": [{ "names": ["staging"] }, { "names": ["prod"] }] }]
+    }
+  ],
+  "options": [
+    { "names": ["-f", "--force"], "description": "Sans confirmation" },
+    { "names": ["--config"], "args": [{ "name": "fichier", "templates": ["filepaths"] }] }
+  ]
+}
+```
 
 ## Organisation
 
