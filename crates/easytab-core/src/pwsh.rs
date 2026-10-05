@@ -16,8 +16,11 @@ use serde::{Deserialize, Serialize};
 use crate::exec;
 use crate::spec::{Arg, Command, Opt, Template, Value};
 
-/// Une interrogation de PowerShell, démarrage compris.
+/// Paramètres d'une commande, démarrage de PowerShell compris.
 const TIMEOUT: Duration = Duration::from_secs(20);
+/// La liste complète : PowerShell parcourt alors tous les modules installés,
+/// ce qui prend parfois plus d'une demi-minute.
+const LIST_TIMEOUT: Duration = Duration::from_secs(90);
 /// La liste des commandes est redemandée au-delà (modules installés depuis).
 const COMMANDS_FRESH_FOR: Duration = Duration::from_secs(24 * 3600);
 
@@ -145,7 +148,14 @@ impl PowerShell {
         if let Some(spec) = state.specs.get(&key) {
             return Some(spec);
         }
-        if !state.known.contains(&key) || !valid_name(name) {
+        if !valid_name(name) {
+            return None;
+        }
+        // Tant que la liste n'est pas arrivée, les noms en `Verbe-Nom` sont
+        // demandés directement : la liste peut être longue à venir.
+        let known = state.known.contains(&key);
+        let listed = !state.cache.commands.is_empty();
+        if !known && (listed || !is_verb_noun(name)) {
             return None;
         }
         let Some(params) = state.cache.params.get(&key) else {
@@ -153,6 +163,10 @@ impl PowerShell {
             self.fetch(name, Job::Params);
             return None;
         };
+        // Pas une commande PowerShell (ou sans paramètre) : rien à proposer.
+        if params.is_empty() && !known {
+            return None;
+        }
         let spec: &'static Command = Box::leak(Box::new(command_spec(name, params)));
         state.specs.insert(key, spec);
         Some(spec)
@@ -170,9 +184,9 @@ impl PowerShell {
         let shell = self.clone();
         let name = name.to_string();
         thread::spawn(move || {
-            let script = match job {
-                Job::List => LIST_SCRIPT.to_string(),
-                Job::Params => PARAMS_SCRIPT.replace("{name}", &name),
+            let (script, timeout) = match job {
+                Job::List => (LIST_SCRIPT.to_string(), LIST_TIMEOUT),
+                Job::Params => (PARAMS_SCRIPT.replace("{name}", &name), TIMEOUT),
             };
             let output = exec::run(
                 &shell.program,
@@ -183,8 +197,11 @@ impl PowerShell {
                     script,
                 ],
                 &std::env::temp_dir(),
-                TIMEOUT,
+                timeout,
             );
+            if output.status != 0 {
+                log_failure(&name, &output);
+            }
             {
                 let mut state = shell.state.lock().unwrap();
                 state.running.remove(&id);
@@ -219,6 +236,31 @@ impl PowerShell {
 enum Job {
     List,
     Params,
+}
+
+/// `Get-ChildItem`, `Remove-Item` : forme des cmdlets.
+fn is_verb_noun(name: &str) -> bool {
+    matches!(name.split_once('-'), Some((verb, noun)) if !verb.is_empty() && !noun.is_empty())
+}
+
+/// Échec de PowerShell, noté dans le journal de diagnostic (`EASYTAB_LOG`).
+fn log_failure(name: &str, output: &exec::Output) {
+    use std::io::Write;
+    let Some(path) = std::env::var_os("EASYTAB_LOG") else {
+        return;
+    };
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+    {
+        let _ = writeln!(
+            file,
+            "PowerShell {name:?} : code {}, {}",
+            output.status,
+            output.stderr.trim()
+        );
+    }
 }
 
 /// Seuls les noms de commande simples sont passés à PowerShell.
@@ -379,5 +421,8 @@ mod tests {
         assert!(valid_name("Microsoft.PowerShell.Core"));
         assert!(!valid_name("x'; rm -r /; '"));
         assert!(!valid_name(""));
+        assert!(is_verb_noun("Remove-Item"));
+        assert!(!is_verb_noun("git"));
+        assert!(!is_verb_noun("-Recurse"));
     }
 }
