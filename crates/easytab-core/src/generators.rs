@@ -592,6 +592,7 @@ pub(crate) mod tests {
 
     /// Spec dont `generateSpec` lit le dossier courant et ajoute une
     /// sous-commande avec un generator, et en remplace une autre.
+    #[cfg(unix)]
     pub(crate) const GENERATED_MODULE: &str = r#"
         export default {
           name: "gen",
