@@ -352,6 +352,60 @@ fn bash_suggests_make_targets() {
     });
 }
 
+/// L'intégration met le dossier de `easytab-term` dans le PATH, une seule
+/// fois même chargée deux fois, pour taper `easytab update` sans chemin.
+#[test]
+fn integration_adds_easytab_to_path() {
+    let home = temp_home("path");
+    let term = format!("{}/easytab-bin-test/easytab-term", home.display()).replace('\\', "/");
+    let script = home.join("easytab.sh");
+    let content =
+        integration("easytab.bash").replace("'easytab-term-absent'", &format!("'{term}'"));
+    std::fs::write(&script, content).unwrap();
+    let bash = if cfg!(windows) {
+        r"C:\Program Files\Git\bin\bash.exe"
+    } else {
+        "bash"
+    };
+    let source = script.display().to_string().replace('\\', "/");
+    let Ok(output) = std::process::Command::new(bash)
+        .arg("-c")
+        .arg(format!(". '{source}'; . '{source}'; echo \"$PATH\""))
+        .output()
+    else {
+        eprintln!("bash absent : test ignoré");
+        return;
+    };
+    let path = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(path.matches("easytab-bin-test").count(), 1, "PATH : {path}");
+    assert!(path.contains("easytab-bin-test:"), "PATH : {path}");
+}
+
+#[cfg(windows)]
+#[test]
+fn powershell_integration_adds_easytab_to_path() {
+    let home = temp_home("pwsh-path");
+    let term = home.join("easytab-bin-test").join("easytab-term.exe");
+    let script = home.join("easytab.ps1");
+    let content = integration("easytab.ps1")
+        .replace("'easytab-term-absent'", &format!("'{}'", term.display()));
+    std::fs::write(&script, content).unwrap();
+    let source = script.display();
+    let output = std::process::Command::new("powershell.exe")
+        .args([
+            "-NoLogo",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+        ])
+        .arg(format!(". '{source}'; . '{source}'; $env:PATH"))
+        .output()
+        .unwrap();
+    let path = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(path.matches("easytab-bin-test").count(), 1, "PATH : {path}");
+}
+
 /// bash : celui du système sous Linux, Git Bash sous Windows (`None` s'il
 /// est absent). `prepare` remplit le dossier personnel avant le lancement.
 fn start_bash(name: &str, prepare: impl FnOnce(&Path)) -> Option<Terminal> {
