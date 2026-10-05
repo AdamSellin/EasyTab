@@ -19,12 +19,19 @@ une liste de suggestions style IDE qui s'affiche pendant que tu tapes une comman
 
 Quand la liste est fermée, Tab garde son comportement habituel (complétion du shell).
 
-Sous Windows, la liste s'affiche dans une fenêtre flottante façon Fig (`easytab-overlay`), placée
-sous le curseur de Windows Terminal ou de VS Code : coins arrondis, ombre, icônes par type (branche
+La liste s'affiche dans une fenêtre flottante façon Fig (`easytab-overlay`), placée sous le
+curseur du terminal : coins arrondis, ombre, icônes par type (branche
 git, script npm, dossier, fichier, option…) et description en bas. La fenêtre ne prend jamais le
 focus : le clavier reste au terminal. Si elle ne trouve pas le curseur (ou avec
 `EASYTAB_OVERLAY=0`), la liste est dessinée dans le terminal. Pour comprendre un mauvais placement,
 `EASYTAB_OVERLAY_LOG=fichier` journalise chaque position du curseur lue par la fenêtre.
+
+- Windows : Windows Terminal et VS Code, curseur lu par UI Automation.
+- macOS : curseur lu par l'accessibilité si le terminal y a accès (Réglages Système >
+  Confidentialité et sécurité > Accessibilité : Terminal, iTerm…, dont `easytab-overlay` hérite) ;
+  sinon, position déduite de la fenêtre du terminal et de sa taille en colonnes et lignes.
+- Linux : sessions X11 seulement, position déduite de la fenêtre active. Sous Wayland, la liste
+  reste dans le terminal (`EASYTAB_OVERLAY=1` essaie quand même, pour un terminal XWayland).
 
 Dans le terminal, la liste ressemble aussi à celle de Fig : une pastille colorée par type (`>` commande, `$` sous-commande,
 `-` option, `@` valeur calculée, `/` dossier…), les lettres tapées en gras, les arguments attendus
@@ -114,7 +121,9 @@ Prérequis : [Rust](https://rustup.rs) stable. Shells pris en charge : zsh, bash
 dans Windows Terminal ou le terminal de VS Code. Dans la fenêtre « Git Bash » par défaut (mintty),
 qui ne fournit pas de console aux programmes Windows, EasyTab passe par `winpty`, livré avec Git
 for Windows ; sans lui, le shell s'y lance sans EasyTab, avec un message.
-Sous Windows, utilise le toolchain Rust MSVC (`rustup default stable-msvc`).
+Sous Windows, utilise le toolchain Rust MSVC (`rustup default stable-msvc`). Sous Linux, la
+fenêtre flottante demande WebKitGTK : `sudo apt install libwebkit2gtk-4.1-dev libgtk-3-dev`
+(Debian, Ubuntu).
 
 ```sh
 cargo build --release

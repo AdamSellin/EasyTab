@@ -381,6 +381,8 @@ impl Popup {
             word_width: completion.replace.width(),
             cursor_row: screen.cursor_position().0 as usize,
             cursor_col: screen.cursor_position().1 as usize,
+            term_cols: screen.size().1 as usize,
+            term_rows: screen.size().0 as usize,
             total: items.len(),
             first: self.scroll,
             light: self.config.list.theme == Theme::Light,

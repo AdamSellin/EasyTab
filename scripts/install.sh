@@ -59,7 +59,8 @@ if ! curl -fsSL "$url" -o "$archive" 2>/dev/null; then
 fi
 tar xzf "$archive" -C "$tmp"
 
-# `easytab install` copie les programmes dans ~/.easytab/bin et configure le shell.
+# `easytab install` copie les programmes dans ~/.easytab/bin (easytab, easytab-term et, s'il est
+# dans l'archive, easytab-overlay, la fenêtre flottante) et configure le shell.
 if [ -n "${EASYTAB_SHELL:-}" ]; then
   "$tmp/easytab-$target/easytab" install --shell "$EASYTAB_SHELL"
 else

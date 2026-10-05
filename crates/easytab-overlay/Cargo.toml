@@ -10,11 +10,14 @@ repository.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 
-[target.'cfg(windows)'.dependencies]
+# Partie commune : la fenêtre (tao) et la page qui dessine la liste (wry).
+[target.'cfg(any(windows, target_os = "macos", target_os = "linux"))'.dependencies]
 anyhow.workspace = true
 dirs.workspace = true
 tao = "0.37"
 wry = "0.57"
+
+[target.'cfg(windows)'.dependencies]
 windows = { version = "0.62", features = [
     "Win32_Foundation",
     "Win32_Graphics_Gdi",
@@ -25,3 +28,15 @@ windows = { version = "0.62", features = [
     "Win32_UI_HiDpi",
     "Win32_UI_WindowsAndMessaging",
 ] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-app-kit = "0.3"
+objc2-application-services = "0.3"
+objc2-core-foundation = "0.3"
+objc2-core-graphics = "0.3"
+objc2-foundation = "0.3"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+gtk = "0.18"
+x11rb = "0.13"

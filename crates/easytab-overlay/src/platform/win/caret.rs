@@ -29,6 +29,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     GetForegroundWindow, GetGUIThreadInfo, GetWindowThreadProcessId, GUITHREADINFO,
 };
 
+use crate::estimate::Hint;
 use crate::placement::{Caret, Rect};
 
 /// Plus grande case de texte crédible, en pixels (polices agrandies, écrans
@@ -51,7 +52,7 @@ impl Locator {
         Self { automation }
     }
 
-    pub fn locate(&self) -> Option<Caret> {
+    pub fn locate(&self, _hint: Hint) -> Option<Caret> {
         // SAFETY: appels Win32/COM en lecture ; les pointeurs passés vivent
         // pendant chaque appel.
         unsafe {
@@ -81,7 +82,7 @@ impl Locator {
                 window: window.0 as isize,
                 element: focused.as_ref().map_or(0, |element| element_id(element)),
             };
-            log(source, &caret);
+            crate::platform::log(source, &caret);
             Some(caret)
         }
     }
@@ -150,31 +151,6 @@ unsafe fn element_id(element: &IUIAutomationElement) -> u64 {
     }
     let _ = SafeArrayDestroy(array);
     hasher.finish()
-}
-
-/// Journal des lectures (`EASYTAB_OVERLAY_LOG=fichier`), pour comprendre un
-/// mauvais placement.
-fn log(source: &str, caret: &Caret) {
-    use std::io::Write;
-    use std::sync::OnceLock;
-    static FILE: OnceLock<Option<std::sync::Mutex<std::fs::File>>> = OnceLock::new();
-    let file = FILE.get_or_init(|| {
-        let path = std::env::var_os("EASYTAB_OVERLAY_LOG")?;
-        let file = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(path)
-            .ok()?;
-        Some(std::sync::Mutex::new(file))
-    });
-    if let Some(file) = file {
-        if let Ok(mut file) = file.lock() {
-            let time = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map_or(0, |d| d.as_millis());
-            let _ = writeln!(file, "{time} {source} {caret:?}");
-        }
-    }
 }
 
 /// Curseur de texte UI Automation de l'élément.

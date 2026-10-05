@@ -213,7 +213,7 @@ fn copy_binaries() -> Result<PathBuf> {
     }
     fs::create_dir_all(&dir).with_context(|| format!("création de {}", dir.display()))?;
     remove_old_copies(&dir);
-    // Fenêtre flottante (Windows) : facultative, la liste peut toujours être
+    // Fenêtre flottante : facultative, la liste peut toujours être
     // dessinée dans le terminal.
     let overlay = exe.with_file_name(format!("easytab-overlay{}", std::env::consts::EXE_SUFFIX));
     let mut installed = None;
@@ -285,7 +285,7 @@ fn doctor() -> Result<()> {
         mark(term_found),
         term.display()
     );
-    if cfg!(windows) {
+    if cfg!(any(windows, target_os = "macos", target_os = "linux")) {
         let overlay =
             term.with_file_name(format!("easytab-overlay{}", std::env::consts::EXE_SUFFIX));
         println!(

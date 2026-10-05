@@ -15,7 +15,7 @@ use std::thread;
 use easytab_core::overlay::{Event, Request, View};
 
 /// `EASYTAB_OVERLAY=0` garde la liste dans le terminal, `1` force la fenêtre
-/// (sous macOS et Linux, où elle n'est pas encore prête).
+/// (sous Linux sans serveur X, ou sous Wayland pour un terminal XWayland).
 const OVERLAY_ENV: &str = "EASYTAB_OVERLAY";
 
 pub struct Overlay {
@@ -37,7 +37,10 @@ impl Overlay {
         let enabled = match std::env::var(OVERLAY_ENV).as_deref() {
             Ok("0") => false,
             Ok("1") => true,
-            _ => cfg!(windows),
+            _ => enabled_by_default(
+                std::env::var_os("DISPLAY").is_some_and(|value| !value.is_empty()),
+                std::env::var_os("WAYLAND_DISPLAY").is_some_and(|value| !value.is_empty()),
+            ),
         };
         if !enabled {
             return None;
@@ -135,9 +138,39 @@ impl Drop for Overlay {
     }
 }
 
+/// La fenêtre est lancée d'office sous Windows et macOS, et sous Linux dans
+/// une session X11 : sous Wayland, elle ne verrait que les terminaux
+/// XWayland, et la liste resterait dans le terminal après chaque essai.
+fn enabled_by_default(x11_display: bool, wayland_display: bool) -> bool {
+    if cfg!(any(windows, target_os = "macos")) {
+        true
+    } else if cfg!(target_os = "linux") {
+        x11_display && !wayland_display
+    } else {
+        false
+    }
+}
+
 /// `easytab-overlay`, à côté de `easytab-term`.
 fn program() -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?;
     let path = exe.with_file_name(format!("easytab-overlay{}", std::env::consts::EXE_SUFFIX));
     path.is_file().then_some(path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn opens_the_window_where_it_can_place_itself() {
+        if cfg!(any(windows, target_os = "macos")) {
+            assert!(enabled_by_default(false, false));
+        } else if cfg!(target_os = "linux") {
+            assert!(enabled_by_default(true, false));
+            // Session Wayland (XWayland fournit DISPLAY) ou pas d'écran.
+            assert!(!enabled_by_default(true, true));
+            assert!(!enabled_by_default(false, false));
+        }
+    }
 }
