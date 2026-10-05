@@ -205,25 +205,20 @@ fn completes_git_checkout(term: &mut Terminal) {
         "Entrée dans la liste ne doit pas lancer la commande.\n{}",
         term.report()
     );
-    // Échap ferme la liste sans rien insérer (l'option insérée finit par une
-    // espace, que `cursor_line` ne garde pas). PowerShell peut afficher
-    // l'option en plusieurs fois : on attend que la ligne ne bouge plus.
-    let mut line = term.cursor_line();
-    loop {
-        term.pump(Duration::from_millis(300));
-        let now = term.cursor_line();
-        if now == line {
-            break;
-        }
-        line = now;
-    }
-    term.send(b"-");
-    term.pump(Duration::from_millis(500));
+    // Échap ferme la liste sans rien insérer. L'option choisie peut finir par
+    // `=` (`--conflict=`) : on repart d'une nouvelle option, ` -`, pour que la
+    // liste des options s'ouvre à coup sûr.
+    term.send(b" -");
+    term.wait_for("la liste après ` -`", |t| {
+        t.cursor_line().ends_with(" -") && t.screen().contains('╭')
+    });
+    let line = term.cursor_line();
     term.send(b"\x1b");
-    term.pump(Duration::from_millis(500));
+    term.wait_for("la liste fermée", |t| !t.screen().contains('╭'));
+    term.pump(Duration::from_millis(300));
     assert_eq!(
         term.cursor_line(),
-        format!("{line} -"),
+        line,
         "Échap ne doit rien insérer.\n{}",
         term.report()
     );
