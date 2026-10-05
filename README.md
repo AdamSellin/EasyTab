@@ -5,7 +5,7 @@
 <h1 align="center">EasyTab</h1>
 
 <p align="center">
-  L'autocomplétion façon IDE pour ton terminal, dans l'esprit de Fig.<br>
+  L'autocomplétion façon IDE pour ton terminal.<br>
   Windows, macOS et Linux · PowerShell, bash, zsh et Git Bash.
 </p>
 
