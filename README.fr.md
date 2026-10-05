@@ -49,6 +49,10 @@ curl -fsSL https://github.com/AdamSellin/EasyTab/releases/latest/download/instal
 irm https://github.com/AdamSellin/EasyTab/releases/latest/download/install.ps1 | iex
 ```
 
+<p align="center">
+  <img src="docs/images/install.gif" alt="Installation d'EasyTab en une commande dans PowerShell, puis easytab doctor" width="720">
+</p>
+
 Ouvre ensuite un nouveau terminal. Pour mettre à jour : `easytab update`.
 
 ## Utiliser
