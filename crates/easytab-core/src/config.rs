@@ -23,6 +23,9 @@ pub const TEMPLATE: &str = r#"# Réglages d'EasyTab. Retirez le « # » devant u
 # Icônes de la liste dans le terminal : "badges" ou "emoji".
 # icons = "badges"
 
+# Proposer les commandes déjà tapées (historique du shell).
+# history = true
+
 [keys]
 # Entrée insère la suggestion choisie avec ↑/↓ (true),
 # ou lance toujours la commande, seul Tab insérant (false).
@@ -43,6 +46,7 @@ pub struct List {
     pub overlay: bool,
     pub theme: Theme,
     pub icons: Icons,
+    pub history: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -77,6 +81,7 @@ impl Default for List {
             overlay: true,
             theme: Theme::Dark,
             icons: Icons::Badges,
+            history: true,
         }
     }
 }
@@ -157,6 +162,7 @@ mod tests {
         let uncommented = uncommented
             .replace("# theme", "theme")
             .replace("# icons", "icons")
+            .replace("# history", "history")
             .replace("# enter_inserts", "enter_inserts");
         assert_eq!(Config::parse(&uncommented).unwrap(), Config::default());
     }

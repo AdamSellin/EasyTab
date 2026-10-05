@@ -8,6 +8,7 @@ use std::sync::{Mutex, OnceLock};
 use crate::exec;
 use crate::files;
 use crate::generators::{Generators, Item};
+use crate::history::History;
 use crate::line::{self, Token};
 use crate::pwsh::PowerShell;
 use crate::rank::{self, best_match, Usage};
@@ -26,6 +27,8 @@ pub enum Kind {
     File,
     /// Valeur calculée par un generator (branche git, script npm…).
     Dynamic,
+    /// Commande entière déjà tapée, tirée de l'historique du shell.
+    History,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -65,6 +68,7 @@ pub struct Completer {
     by_name: HashMap<String, usize>,
     generators: Generators,
     usage: Mutex<Usage>,
+    history: Mutex<History>,
 }
 
 /// Ce que les generators ont besoin de savoir sur la ligne.
@@ -96,6 +100,7 @@ impl Completer {
             by_name,
             generators: Generators::disabled(),
             usage: Mutex::default(),
+            history: Mutex::default(),
         }
     }
 
@@ -105,8 +110,15 @@ impl Completer {
         self
     }
 
+    /// Propose aussi les commandes déjà tapées.
+    pub fn with_history(mut self, history: History) -> Self {
+        self.history = Mutex::new(history);
+        self
+    }
+
     /// Note les mots d'une commande exécutée.
     pub fn record(&self, input: &str) {
+        self.history.lock().unwrap().push(input);
         let line = line::parse(input);
         let words: Vec<String> = line
             .words
@@ -147,6 +159,31 @@ impl Completer {
         };
         self.complete_words(&line.words, &line.current, &mut context, &mut out);
         self.rank(&context.tokens, &mut out);
+        // Les commandes déjà tapées passent devant, comme dans Fig.
+        let typed = input
+            .strip_suffix(line.current.raw.as_str())
+            .unwrap_or(input);
+        let history: Vec<Suggestion> = self
+            .history
+            .lock()
+            .unwrap()
+            .matches(input)
+            .into_iter()
+            .filter_map(|full| {
+                let rest = full.trim_start().strip_prefix(typed.trim_start())?;
+                Some(Suggestion {
+                    label: full.to_string(),
+                    insert: rest.to_string(),
+                    description: None,
+                    hint: None,
+                    icon: None,
+                    kind: Kind::History,
+                    append_space: false,
+                    rank: 0,
+                })
+            })
+            .collect();
+        out.splice(0..0, history);
         out.truncate(MAX_SUGGESTIONS);
         Completion {
             replace: line.current.raw,
@@ -572,6 +609,30 @@ mod tests {
     }
 
     #[test]
+    fn suggests_whole_commands_from_history() {
+        let completer = Completer::new(Vec::new())
+            .with_history(History::new(["docker-compose up -d --build".to_string()]));
+        let completion = completer.complete("docker-compose u", Path::new("/"));
+        let first = &completion.suggestions[0];
+        assert_eq!(first.kind, Kind::History);
+        assert_eq!(first.label, "docker-compose up -d --build");
+        assert_eq!(completion.replace, "u");
+        assert_eq!(first.insert, "up -d --build");
+        // Une commande exécutée devient la plus récente.
+        completer.record("docker-compose up");
+        let labels: Vec<String> = completer
+            .complete("docker-compose ", Path::new("/"))
+            .suggestions
+            .into_iter()
+            .map(|s| s.label)
+            .collect();
+        assert_eq!(
+            labels,
+            ["docker-compose up", "docker-compose up -d --build"]
+        );
+    }
+
+    #[test]
     fn embeds_all_fig_specs() {
         let specs = spec::builtin();
         assert!(specs.len() > 700, "{}", specs.len());
@@ -724,6 +785,8 @@ mod tests {
             .complete("git che", Path::new("/nonexistent"))
             .suggestions
             .into_iter()
+            // Les commandes notées reviennent aussi par l'historique, en tête.
+            .filter(|s| s.kind != Kind::History)
             .map(|s| s.label)
             .collect();
         assert_eq!(found[0], "cherry-pick", "{found:?}");

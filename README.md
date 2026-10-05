@@ -49,12 +49,17 @@ rows = 8            # suggestions visibles (de 3 à 20)
 overlay = true      # fenêtre flottante, ou false pour la liste dans le terminal
 theme = "dark"      # ou "light"
 icons = "badges"    # ou "emoji" (liste dans le terminal)
+history = true      # proposer les commandes déjà tapées
 
 [keys]
 enter_inserts = true  # false : Entrée lance toujours la commande, seul Tab insère
 ```
 
 Les variables `EASYTAB_OVERLAY` et `EASYTAB_ICONS` passent avant le fichier.
+
+Comme dans Fig, les commandes déjà tapées qui prolongent la ligne en cours passent en tête
+(`docker-compose u` → `docker-compose up -d --build`, icône d'horloge), tirées de l'historique du
+shell (`~/.bash_history`, `~/.zsh_history`, historique PSReadLine de PowerShell).
 
 Les suggestions sont classées par qualité de correspondance (début du nom, puis recherche floue :
 `git chk` trouve `checkout`), puis par fréquence d'utilisation, retenue dans `~/.easytab/usage.json`.

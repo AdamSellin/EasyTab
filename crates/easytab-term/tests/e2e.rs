@@ -176,9 +176,11 @@ fn integration(file: &str) -> String {
 /// sans rien insérer.
 fn completes_git_checkout(term: &mut Terminal) {
     term.send(b"git checko");
-    // La description de `checkout` s'affiche sous la liste.
+    // La description de `checkout` s'affiche sous la liste. Le shell doit
+    // aussi avoir tout affiché : PowerShell peut n'avoir montré que `git c`,
+    // dont la liste décrit déjà `checkout`.
     term.wait_for("la liste avec checkout", |t| {
-        t.screen().contains("Switch branches")
+        t.screen().contains("Switch branches") && t.cursor_line().ends_with("git checko")
     });
     term.send(b"\t");
     term.wait_for("la ligne git checkout", |t| {
@@ -277,20 +279,39 @@ fn which(program: &str) -> bool {
         .is_some_and(|path| std::env::split_paths(&path).any(|dir| dir.join(program).is_file()))
 }
 
-/// bash : celui du système sous Linux, Git Bash sous Windows.
+/// Les commandes déjà tapées (`~/.bash_history`) sont proposées entières.
 #[test]
-fn bash_suggests_and_inserts() {
+fn bash_suggests_history() {
+    let Some(mut term) = start_bash("bash-history", |home| {
+        std::fs::write(home.join(".bash_history"), "echo easytab-history-test\n").unwrap();
+    }) else {
+        return;
+    };
+    term.send(b"echo eas");
+    term.wait_for("la commande de l'historique", |t| {
+        t.screen().contains("echo easytab-history-test")
+    });
+    term.send(b"\t");
+    term.wait_for("la ligne complétée", |t| {
+        t.cursor_line() == "$ echo easytab-history-test"
+    });
+}
+
+/// bash : celui du système sous Linux, Git Bash sous Windows (`None` s'il
+/// est absent). `prepare` remplit le dossier personnel avant le lancement.
+fn start_bash(name: &str, prepare: impl FnOnce(&Path)) -> Option<Terminal> {
     let bash = if cfg!(windows) {
         let git_bash = Path::new(r"C:\Program Files\Git\bin\bash.exe");
         if !git_bash.is_file() {
             eprintln!("Git Bash absent : test ignoré");
-            return;
+            return None;
         }
         git_bash.display().to_string()
     } else {
         "bash".to_string()
     };
-    let home = temp_home("bash");
+    let home = temp_home(name);
+    prepare(&home);
     let rc = home.join("easytabrc");
     std::fs::write(&rc, format!("PS1='$ '\n{}", integration("easytab.bash"))).unwrap();
     let args = [
@@ -301,5 +322,12 @@ fn bash_suggests_and_inserts() {
     ];
     let mut term = Terminal::start(&bash, &args, &home);
     term.wait_for("le prompt bash", |t| t.cursor_line() == "$");
-    completes_git_checkout(&mut term);
+    Some(term)
+}
+
+#[test]
+fn bash_suggests_and_inserts() {
+    if let Some(mut term) = start_bash("bash", |_| {}) {
+        completes_git_checkout(&mut term);
+    }
 }
