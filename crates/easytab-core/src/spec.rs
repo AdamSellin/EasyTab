@@ -348,14 +348,14 @@ mod tests {
         assert!(errors.iter().any(|e| e.contains("faux.json")));
         assert!(custom(&dir.join("absent")).0.is_empty());
 
-        // L'exemple du README est valide.
-        let readme = include_str!("../../../README.md");
-        let example = readme
+        // L'exemple du guide est valide.
+        let guide = include_str!("../../../docs/guide.md");
+        let example = guide
             .split("### Specs personnelles")
             .nth(1)
             .and_then(|s| s.split("```json").nth(1))
             .and_then(|s| s.split("```").next())
-            .expect("exemple de spec dans le README");
+            .expect("exemple de spec dans le guide");
         std::fs::write(dir.join("a.json"), example).unwrap();
         let (specs, _) = custom(&dir);
         let deploy = specs[0].command();

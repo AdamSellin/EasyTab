@@ -1,7 +1,7 @@
 # EasyTab : notes pour Claude
 
 Autocomplétion graphique pour le terminal, façon Fig : un wrapper PTY lit la ligne en cours et
-affiche des suggestions tirées des specs de Fig. Vue d'ensemble des dossiers : voir le README.
+affiche des suggestions tirées des specs de Fig. Vue d'ensemble des dossiers : `docs/guide.md`.
 
 ## Commandes
 
@@ -30,7 +30,7 @@ cargo test
 
 - Réglages de l'utilisateur : `crates/easytab-core/src/config.rs` (`~/.easytab/config.toml`),
   partagé avec `easytab-cli` par `#[path]` pour ne pas y embarquer QuickJS. Tout nouveau réglage
-  va aussi dans `TEMPLATE` et dans le README.
+  va aussi dans `TEMPLATE` et dans `docs/guide.md` (le README reste court).
 - Ordre des specs d'une commande (`Completer::complete_words`) : `~/.easytab/specs` (`spec::custom`),
   puis Fig, puis PowerShell (`pwsh.rs`), puis `--help` (`help.rs`). Valeurs lues dans les fichiers
   du projet ou de l'utilisateur (Makefile, composer.json, angular.json, package.json,
