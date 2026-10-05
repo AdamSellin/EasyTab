@@ -14,7 +14,7 @@ une liste de suggestions style IDE qui s'affiche pendant que tu tapes une comman
 |---|---|
 | ↑ / ↓ | Choisir une suggestion |
 | Tab | Insérer la suggestion choisie |
-| Entrée | Après ↑ / ↓ : insérer la suggestion choisie (sans flèche, la commande part comme d'habitude) |
+| Entrée | Insérer la suggestion surlignée quand elle complète le mot tapé, ou après ↑ / ↓ ; sinon la commande part comme d'habitude |
 | Échap | Fermer la liste jusqu'à la prochaine frappe |
 
 Quand la liste est fermée, Tab garde son comportement habituel (complétion du shell).

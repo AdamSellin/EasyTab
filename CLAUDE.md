@@ -50,8 +50,9 @@ cargo test
   Un harnais de test doit y répondre.
 - Les touches peuvent arriver en `win32-input-mode` (`ESC[Vk;Sc;Uc;Kd;Cs;Rc_`) : voir `Key::parse` dans
   `crates/easytab-term/src/popup.rs`.
-- Entrée dans la liste n'insère que si l'on s'est déplacé avec ↑/↓ ; sinon elle lance la
-  commande. Tab insère toujours.
+- Entrée dans la liste insère la suggestion surlignée si elle complète le mot tapé (`git sta`
+  → `status`) ou si l'on s'est déplacé avec ↑/↓ ; sinon elle lance la commande. Tab insère
+  toujours.
 - mintty (fenêtre « Git Bash » par défaut) ne fournit pas de console : l'intégration bash y lance
   `easytab-term` sous `winpty` (détecté par `TERM_PROGRAM=mintty`). Sans winpty, EasyTab s'y
   désactive. Le test de bout en bout ne couvre pas ce cas : tester à la main.

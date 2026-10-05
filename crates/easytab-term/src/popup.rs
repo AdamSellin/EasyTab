@@ -322,7 +322,27 @@ impl Popup {
 
     /// Vrai si la touche revient à la liste plutôt qu'au shell.
     pub fn handles(&self, key: Key) -> bool {
-        self.is_shown() && (key != Key::Enter || (self.navigated && self.config.keys.enter_inserts))
+        self.is_shown() && (key != Key::Enter || self.enter_inserts())
+    }
+
+    /// Entrée insère la suggestion surlignée, comme dans Fig, quand on l'a
+    /// choisie avec ↑/↓ ou qu'elle complète le mot en cours (`git sta` →
+    /// `status`). Sinon (mot déjà complet, rien de tapé, simple ressemblance),
+    /// Entrée lance la commande.
+    fn enter_inserts(&self) -> bool {
+        if !self.config.keys.enter_inserts {
+            return false;
+        }
+        if self.navigated {
+            return true;
+        }
+        let Some(completion) = &self.completion else {
+            return false;
+        };
+        let typed = completion.replace.as_str();
+        completion.suggestions.get(self.selected).is_some_and(|s| {
+            !typed.is_empty() && s.insert.len() > typed.len() && s.insert.starts_with(typed)
+        })
     }
 
     pub fn dismiss(&mut self) {
@@ -775,12 +795,22 @@ mod tests {
     }
 
     #[test]
-    fn enter_inserts_only_after_choosing_with_the_arrows() {
+    fn enter_inserts_the_highlighted_completion() {
+        // Le mot en cours est complété par la suggestion surlignée.
         let session = session_with(b"git ch");
         let mut popup = popup_for(&session);
         let mut out = Vec::new();
         popup.draw(session.screen(), &mut out);
         assert!(popup.handles(Key::Down));
+        assert!(popup.handles(Key::Enter));
+        popup.select(1);
+        assert!(popup.handles(Key::Enter));
+
+        // Rien de tapé dans le mot : Entrée lance la commande, sauf après ↓.
+        let session = session_with(b"git ");
+        let mut popup = popup_for(&session);
+        popup.draw(session.screen(), &mut out);
+        assert!(popup.is_shown());
         assert!(!popup.handles(Key::Enter));
         popup.select(1);
         assert!(popup.handles(Key::Enter));

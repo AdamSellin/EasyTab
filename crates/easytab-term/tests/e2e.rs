@@ -299,6 +299,32 @@ fn bash_suggests_history() {
     });
 }
 
+/// Entrée prend la suggestion surlignée qui complète le mot, sans flèche,
+/// et ne lance pas la commande.
+#[test]
+fn enter_inserts_the_highlighted_completion() {
+    let Some(mut term) = start_bash("bash-enter", |home| {
+        std::fs::write(home.join(".bash_history"), "echo easytab-enter-test\n").unwrap();
+    }) else {
+        return;
+    };
+    term.send(b"echo eas");
+    term.wait_for("la commande de l'historique", |t| {
+        t.screen().contains("echo easytab-enter-test") && t.cursor_line() == "$ echo eas"
+    });
+    term.send(b"\r");
+    term.wait_for("la ligne complétée", |t| {
+        t.cursor_line() == "$ echo easytab-enter-test"
+    });
+    term.pump(Duration::from_millis(300));
+    assert_eq!(
+        term.cursor_line(),
+        "$ echo easytab-enter-test",
+        "Entrée ne doit pas lancer la commande.\n{}",
+        term.report()
+    );
+}
+
 /// `make ` propose les cibles du Makefile du dossier courant.
 #[cfg(target_os = "linux")]
 #[test]
