@@ -63,6 +63,23 @@ impl Key {
     /// la forme `ESC[Vk;Sc;Uc;Kd;Cs;Rc_` (appui puis relâchement).
     fn parse_win32(data: &[u8]) -> Option<Key> {
         let records = win32_records(data)?;
+        // Séquence VT que la console n'a pas reconnue (`ESC[B` reçu d'un
+        // terminal qui n'est pas en win32-input-mode) : elle la transmet
+        // caractère par caractère, sans touche virtuelle. On la recompose.
+        if records.iter().filter(|r| r.down).all(|r| r.vk == 0) {
+            let text: Option<Vec<u8>> = records
+                .iter()
+                .filter(|r| r.down)
+                .map(|r| u8::try_from(r.unicode).ok())
+                .collect();
+            let text = text?;
+            return match text.as_slice() {
+                b"\x1b[A" | b"\x1bOA" => Some(Key::Up),
+                b"\x1b[B" | b"\x1bOB" => Some(Key::Down),
+                b"\x1b" => Some(Key::Dismiss),
+                _ => None,
+            };
+        }
         let mut pressed = records.iter().filter(|r| r.down);
         let record = pressed.next()?;
         if pressed.next().is_some() || record.modifiers & MODIFIERS != 0 {
@@ -132,6 +149,7 @@ const MODIFIERS: u32 = 0x1f;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Win32Record {
     vk: u32,
+    unicode: u32,
     down: bool,
     modifiers: u32,
 }
@@ -152,11 +170,12 @@ fn win32_records(data: &[u8]) -> Option<Vec<Win32Record>> {
         let mut values = fields.split(';').map(|f| f.parse::<u32>().unwrap_or(0));
         let vk = values.next().unwrap_or(0);
         let _scan_code = values.next();
-        let _unicode = values.next();
+        let unicode = values.next().unwrap_or(0);
         let down = values.next().unwrap_or(0) == 1;
         let modifiers = values.next().unwrap_or(0);
         records.push(Win32Record {
             vk,
+            unicode,
             down,
             modifiers,
         });
@@ -699,6 +718,13 @@ mod tests {
         assert_eq!(Key::parse(b"\x1b[27;1;27;1;0;1_"), Some(Key::Dismiss));
         assert_eq!(Key::parse(b"\x1b[40;80;0;1;256;1_"), Some(Key::Down));
         assert_eq!(Key::parse(b"\x1b[38;72;0;1;256;1_"), Some(Key::Up));
+        // Séquence VT transmise caractère par caractère, sans touche virtuelle.
+        assert_eq!(
+            Key::parse(b"\x1b[0;0;27;1;0;1_\x1b[0;0;91;1;0;1_\x1b[0;0;66;1;0;1_"),
+            Some(Key::Down)
+        );
+        assert_eq!(Key::parse(b"\x1b[0;0;27;1;0;1_"), Some(Key::Dismiss));
+        assert_eq!(Key::parse(b"\x1b[0;0;97;1;0;1_"), None);
         // Relâchement seul, Maj+Tab, lettre : pas pour la liste.
         assert_eq!(Key::parse(b"\x1b[13;28;13;0;0;1_"), None);
         assert_eq!(Key::parse(b"\x1b[9;15;9;1;16;1_"), None);
