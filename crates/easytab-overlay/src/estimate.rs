@@ -156,6 +156,7 @@ mod tests {
             first: 0,
             term_cols: 80,
             term_rows: 24,
+            light: false,
         };
         assert_eq!(
             Hint::from(&view),
