@@ -48,6 +48,8 @@ impl Terminal {
         cmd.cwd(home);
         cmd.env("HOME", home);
         cmd.env("USERPROFILE", home);
+        // L'historique de PowerShell (PSReadLine) est dans %APPDATA%.
+        cmd.env("APPDATA", home.join("AppData").join("Roaming"));
         cmd.env("TERM", "xterm-256color");
         // La liste dans le terminal : la fenêtre flottante n'a pas d'écran ici.
         cmd.env("EASYTAB_OVERLAY", "0");

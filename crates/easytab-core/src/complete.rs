@@ -766,9 +766,17 @@ mod tests {
 
     #[test]
     fn suggests_whole_commands_from_history() {
-        let completer = Completer::new(Vec::new())
-            .with_history(History::new(["docker-compose up -d --build".to_string()]));
+        let completer = Completer::new(Vec::new()).with_history(History::new([
+            "docker-compose down".to_string(),
+            "docker-compose up -d --build".to_string(),
+        ]));
         let completion = completer.complete("docker-compose u", Path::new("/"));
+        assert_eq!(
+            completion.suggestions.len(),
+            1,
+            "{:?}",
+            completion.suggestions
+        );
         let first = &completion.suggestions[0];
         assert_eq!(first.kind, Kind::History);
         assert_eq!(first.label, "docker-compose up -d --build");
@@ -784,7 +792,11 @@ mod tests {
             .collect();
         assert_eq!(
             labels,
-            ["docker-compose up", "docker-compose up -d --build"]
+            [
+                "docker-compose up",
+                "docker-compose up -d --build",
+                "docker-compose down"
+            ]
         );
     }
 
@@ -806,8 +818,19 @@ mod tests {
 
     #[test]
     fn suggests_only_installed_commands() {
-        // `symfony` a une spec mais n'est pas installé ici.
+        // Seul `git` est installé : `symfony` a une spec mais n'est pas proposé.
+        let mut completer = Completer::builtin();
+        completer.installed = Some(OnceLock::from(HashSet::from(["git".to_string()])));
+        let labels = |input: &str| -> Vec<String> {
+            completer
+                .complete(input, &PathBuf::from("/nonexistent"))
+                .suggestions
+                .into_iter()
+                .map(|s| s.label)
+                .collect()
+        };
         assert!(!labels("symfon").contains(&"symfony".to_string()));
+        assert!(labels("gi").contains(&"git".to_string()));
     }
 
     #[test]
