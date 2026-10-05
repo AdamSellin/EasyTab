@@ -178,12 +178,12 @@ fn install(shell: Shell) -> Result<()> {
         println!(
             "EasyTab est {} dans {}",
             if updated { "mis à jour" } else { "installé" },
-            path.display()
+            short(&path)
         );
     }
     println!(
         "Programmes dans {}. Ouvre un nouveau terminal pour activer EasyTab.",
-        exe.parent().unwrap_or(&exe).display()
+        short(exe.parent().unwrap_or(&exe))
     );
     Ok(())
 }
@@ -262,11 +262,11 @@ fn uninstall(shell: Shell) -> Result<()> {
     for path in shell.rc_files()? {
         let content = read_or_empty(&path)?;
         if !rc::has_block(&content) {
-            println!("EasyTab n'est pas installé dans {}", path.display());
+            println!("EasyTab n'est pas installé dans {}", short(&path));
             continue;
         }
         write_config(shell, &path, &rc::remove_blocks(&content))?;
-        println!("EasyTab est retiré de {}", path.display());
+        println!("EasyTab est retiré de {}", short(&path));
     }
     Ok(())
 }
@@ -283,7 +283,7 @@ fn doctor() -> Result<()> {
     println!(
         "{} wrapper easytab-term : {}",
         mark(term_found),
-        term.display()
+        short(&term)
     );
     if cfg!(any(windows, target_os = "macos", target_os = "linux")) {
         let overlay =
@@ -292,7 +292,7 @@ fn doctor() -> Result<()> {
             "{} fenêtre flottante : {}",
             mark(overlay.is_file()),
             if overlay.is_file() {
-                overlay.display().to_string()
+                short(&overlay)
             } else {
                 "absente, la liste s'affiche dans le terminal".to_string()
             }
@@ -302,7 +302,7 @@ fn doctor() -> Result<()> {
         let mut installed_in = Vec::new();
         for path in shell.rc_files()? {
             if rc::has_block(&read_or_empty(&path)?) {
-                installed_in.push(path.display().to_string());
+                installed_in.push(short(&path));
             }
         }
         println!(
@@ -332,7 +332,7 @@ fn doctor() -> Result<()> {
 /// État du fichier de réglages, pour `doctor` et `config`.
 fn config_status(path: &Path) -> (bool, String) {
     match config::Config::read(path) {
-        Ok(Some(_)) => (true, path.display().to_string()),
+        Ok(Some(_)) => (true, short(path)),
         Ok(None) => (
             true,
             "par défaut (easytab config pour les changer)".to_string(),
@@ -341,7 +341,7 @@ fn config_status(path: &Path) -> (bool, String) {
             false,
             format!(
                 "{} est invalide, réglages par défaut utilisés :\n     {}",
-                path.display(),
+                short(path),
                 error.trim().replace('\n', "\n     ")
             ),
         ),
@@ -358,9 +358,9 @@ fn edit_config() -> Result<()> {
         }
         fs::write(&path, config::TEMPLATE)
             .with_context(|| format!("écriture de {}", path.display()))?;
-        println!("Fichier de réglages créé : {}", path.display());
+        println!("Fichier de réglages créé : {}", short(&path));
     } else {
-        println!("Fichier de réglages : {}", path.display());
+        println!("Fichier de réglages : {}", short(&path));
     }
     let (ok, status) = config_status(&path);
     if !ok {
@@ -421,5 +421,43 @@ fn mark(ok: bool) -> &'static str {
         "[ok]"
     } else {
         "[--]"
+    }
+}
+
+/// Chemin à afficher : `~` à la place du dossier personnel, pour des messages
+/// plus courts qui ne montrent pas le nom d'utilisateur.
+fn short(path: &Path) -> String {
+    match dirs::home_dir() {
+        Some(home) => short_in(path, &home),
+        None => path.display().to_string(),
+    }
+}
+
+fn short_in(path: &Path, home: &Path) -> String {
+    match path.strip_prefix(home) {
+        Ok(rest) if rest.as_os_str().is_empty() => "~".to_string(),
+        Ok(rest) => format!("~{}{}", std::path::MAIN_SEPARATOR, rest.display()),
+        Err(_) => path.display().to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn short_replaces_home_with_tilde() {
+        let home = Path::new("/home/adam");
+        let sep = std::path::MAIN_SEPARATOR;
+        assert_eq!(
+            short_in(&home.join(".easytab").join("bin"), home),
+            format!("~{sep}.easytab{sep}bin")
+        );
+        assert_eq!(short_in(home, home), "~");
+        assert_eq!(short_in(Path::new("/etc/profile"), home), "/etc/profile");
+        assert_eq!(
+            short_in(Path::new("/home/adamx/.bashrc"), home),
+            "/home/adamx/.bashrc"
+        );
     }
 }

@@ -153,19 +153,6 @@ Relancer la même commande met à jour ; `easytab update` aussi, pour les shells
 Les anciennes versions mises de côté par une mise à jour (`*.old-…` dans `~/.easytab/bin`) sont
 effacées au lancement suivant d'un terminal.
 
-Tant que le dépôt est privé, les liens `releases/latest/download/…` répondent 404 sans connexion
-à GitHub. Lance alors le script depuis un clone du dépôt : il télécharge la version publiée avec
-les identifiants GitHub que git utilise déjà (ou `GITHUB_TOKEN`, ou GitHub CLI). `easytab update`
-fait de même.
-
-```sh
-sh scripts/install.sh          # Linux, macOS
-```
-
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts\install.ps1   # Windows
-```
-
 Shells pris en charge : zsh, bash et PowerShell (7 et Windows PowerShell 5), et Git Bash sous
 Windows, dans Windows Terminal ou le terminal de VS Code. Dans la fenêtre « Git Bash » par défaut
 (mintty), qui ne fournit pas de console aux programmes Windows, EasyTab passe par `winpty`, livré
