@@ -126,6 +126,36 @@ fn search_path(program: &str) -> Option<PathBuf> {
         .find(|candidate| candidate.is_file())
 }
 
+/// Noms des programmes du PATH (sans `.exe` sous Windows), pour ne proposer
+/// que des commandes installées.
+pub fn installed_programs() -> std::collections::HashSet<String> {
+    let extensions = executable_extensions();
+    let Some(path) = std::env::var_os("PATH") else {
+        return Default::default();
+    };
+    let mut names = std::collections::HashSet::new();
+    for dir in std::env::split_paths(&path) {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if cfg!(windows) {
+                let lower = name.to_ascii_lowercase();
+                if let Some(ext) = extensions
+                    .iter()
+                    .find(|ext| !ext.is_empty() && lower.ends_with(ext.as_str()))
+                {
+                    names.insert(lower[..lower.len() - ext.len()].to_string());
+                }
+            } else {
+                names.insert(name);
+            }
+        }
+    }
+    names
+}
+
 #[cfg(windows)]
 fn executable_extensions() -> Vec<String> {
     std::env::var("PATHEXT")

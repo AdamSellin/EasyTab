@@ -3,25 +3,21 @@
 //
 // Usage : node tools/import-fig-specs.mjs <dossier du paquet @withfig/autocomplete> specs
 //
-// Écrit deux fichiers dans le dossier de sortie :
-// - `specs.json` : la partie déclarative des specs (sous-commandes, options,
+// Importe toutes les specs de premier niveau du paquet. Écrit deux fichiers,
+// compressés (zlib), dans le dossier de sortie :
+// - `specs.json.z` : la partie déclarative des specs (sous-commandes, options,
 //   valeurs, fichiers et dossiers). Chaque generator dynamique y est remplacé par
 //   son chemin dans la spec d'origine.
-// - `modules.json` : le code JavaScript des specs qui ont des generators. EasyTab
-//   l'exécute dans son moteur JS embarqué pour lancer ces generators.
+// - `modules.json.z` : le code JavaScript des specs qui ont des generators.
+//   EasyTab l'exécute dans son moteur JS embarqué pour lancer ces generators.
 
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { deflateSync } from "node:zlib";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
-// Commandes embarquées dans EasyTab. Garder la liste triée.
-const COMMANDS = [
-  "apt", "brew", "cargo", "cat", "cd", "chmod", "code", "cp", "curl", "docker",
-  "docker-compose", "find", "gh", "git", "go", "grep", "head", "kill", "kubectl",
-  "less", "ln", "ls", "make", "man", "mkdir", "mv", "node", "npm", "npx", "pip",
-  "pip3", "pnpm", "python", "python3", "rm", "rmdir", "rustup", "scp", "ssh",
-  "sudo", "systemctl", "tail", "tar", "touch", "vim", "wget", "yarn",
-];
+// Fichiers du paquet qui ne sont pas des specs de commande.
+const SKIP = new Set(["-", "index"]);
 
 const TEMPLATES = new Set(["filepaths", "folders"]);
 
@@ -138,7 +134,12 @@ const out = resolve(process.argv[3] ?? "specs");
 const { version } = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
 const specs = [];
 const modules = {};
-for (const name of COMMANDS) {
+const commands = readdirSync(join(root, "build"))
+  .filter((file) => file.endsWith(".js"))
+  .map((file) => file.slice(0, -3))
+  .filter((name) => !SKIP.has(name))
+  .sort();
+for (const name of commands) {
   const file = join(root, "build", `${name}.js`);
   const module = await import(pathToFileURL(file).href);
   const spec = command(module.default, []);
@@ -154,6 +155,8 @@ for (const name of COMMANDS) {
   specs.push(spec);
 }
 const source = `@withfig/autocomplete@${version}`;
-writeFileSync(join(out, "specs.json"), JSON.stringify({ source, specs }) + "\n");
-writeFileSync(join(out, "modules.json"), JSON.stringify({ source, modules }) + "\n");
+const write = (file, value) =>
+  writeFileSync(join(out, file), deflateSync(JSON.stringify(value), { level: 9 }));
+write("specs.json.z", { source, specs });
+write("modules.json.z", { source, modules });
 console.error(`${specs.length} specs exportées, ${Object.keys(modules).length} avec generators`);

@@ -9,6 +9,7 @@ repository.workspace = true
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
+miniz_oxide.workspace = true
 rquickjs.workspace = true
 toml.workspace = true
 vt100.workspace = true

@@ -3,13 +3,14 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 
+use crate::exec;
 use crate::files;
 use crate::generators::{Generators, Item};
 use crate::line::{self, Token};
 use crate::rank::{self, best_match, Usage};
-use crate::spec::{Arg, Bundle, Command, Generator, Opt, Template};
+use crate::spec::{self, Arg, Command, Generator, Opt, Spec, Template};
 
 /// Nombre maximum de suggestions renvoyées.
 const MAX_SUGGESTIONS: usize = 300;
@@ -55,7 +56,9 @@ pub struct Completion {
 }
 
 pub struct Completer {
-    commands: Vec<Command>,
+    commands: Vec<Spec>,
+    /// Ne propose comme commandes que celles installées (dans le PATH).
+    installed: Option<OnceLock<HashSet<String>>>,
     by_name: HashMap<String, usize>,
     generators: Generators,
     usage: Mutex<Usage>,
@@ -73,6 +76,10 @@ struct Context<'a> {
 
 impl Completer {
     pub fn new(commands: Vec<Command>) -> Self {
+        Self::from_specs(commands.into_iter().map(Spec::from).collect())
+    }
+
+    fn from_specs(commands: Vec<Spec>) -> Self {
         let mut by_name = HashMap::new();
         for (i, command) in commands.iter().enumerate() {
             for name in &command.names {
@@ -81,6 +88,7 @@ impl Completer {
         }
         Self {
             commands,
+            installed: None,
             by_name,
             generators: Generators::disabled(),
             usage: Mutex::default(),
@@ -107,7 +115,9 @@ impl Completer {
 
     /// Completer avec les specs embarquées, sans generators.
     pub fn builtin() -> Self {
-        Self::new(Bundle::builtin().specs)
+        let mut completer = Self::from_specs(spec::builtin());
+        completer.installed = Some(OnceLock::new());
+        completer
     }
 
     /// Active les suggestions dynamiques.
@@ -150,7 +160,7 @@ impl Completer {
     fn find(&self, name: &str) -> Option<&Command> {
         // `/usr/bin/git` -> `git`
         let name = name.rsplit('/').next().unwrap_or(name);
-        self.by_name.get(name).map(|&i| &self.commands[i])
+        self.by_name.get(name).map(|&i| self.commands[i].command())
     }
 
     fn complete_words<'a>(
@@ -259,10 +269,15 @@ impl Completer {
         if prefix.is_empty() {
             return;
         }
+        let installed = self
+            .installed
+            .as_ref()
+            .map(|lock| lock.get_or_init(exec::installed_programs));
         let mut found: Vec<Suggestion> = self
             .commands
             .iter()
             .flat_map(|c| c.names.iter().map(move |n| (n, c)))
+            .filter(|(name, _)| installed.is_none_or(|set| set.contains(name.as_str())))
             .filter_map(|(name, command)| {
                 Some(Suggestion {
                     rank: rank::match_rank(name, prefix)?,
@@ -517,6 +532,28 @@ mod tests {
         let found = labels("gi");
         assert!(found.contains(&"git".to_string()), "{found:?}");
         assert!(labels("").is_empty());
+    }
+
+    #[test]
+    fn embeds_all_fig_specs() {
+        let specs = spec::builtin();
+        assert!(specs.len() > 700, "{}", specs.len());
+        let symfony = specs
+            .iter()
+            .find(|s| s.names.contains(&"symfony".to_string()))
+            .unwrap();
+        // Lue seulement à la demande.
+        assert!(symfony
+            .command()
+            .subcommands
+            .iter()
+            .any(|c| c.names.contains(&"server:start".to_string())));
+    }
+
+    #[test]
+    fn suggests_only_installed_commands() {
+        // `symfony` a une spec mais n'est pas installé ici.
+        assert!(!labels("symfon").contains(&"symfony".to_string()));
     }
 
     #[test]
