@@ -26,7 +26,8 @@ cargo test
   `CC_aarch64_apple_darwin=clang cargo clippy -p easytab-overlay --target aarch64-apple-darwin`.
   `easytab-term` ne se compile pas ainsi (QuickJS demande un gcc MinGW).
 - Publier une version : « Run workflow » sur `Release` dans l'onglet Actions, avec le nom de la
-  version (`v0.1.1`), ou pousser un tag `v*`.
+  version (`v0.1.1`), ou pousser un tag `v*`. Passer d'abord `version` dans `Cargo.toml` au même
+  numéro : la release le corrige d'elle-même, mais une compilation locale l'affiche.
 
 - Réglages de l'utilisateur : `crates/easytab-core/src/config.rs` (`~/.easytab/config.toml`),
   partagé avec `easytab-cli` par `#[path]` pour ne pas y embarquer QuickJS. Tout nouveau réglage
