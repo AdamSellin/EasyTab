@@ -170,6 +170,16 @@ impl Completer {
         self
     }
 
+    /// Suite de la commande la plus récente de l'historique qui prolonge
+    /// `input`, affichée en gris après le curseur.
+    pub fn inline(&self, input: &str) -> Option<String> {
+        let typed = input.trim_start();
+        let history = self.history.lock().unwrap();
+        let full = history.matches(input).into_iter().next()?;
+        let rest = full.strip_prefix(typed)?;
+        (!rest.is_empty() && !rest.contains('\n')).then(|| rest.to_string())
+    }
+
     /// Note les mots d'une commande exécutée.
     pub fn record(&self, input: &str) {
         self.history.lock().unwrap().push(input);

@@ -20,6 +20,13 @@ suggestions, les specs personnelles, l'installation depuis les sources.
 | Entrée | Insérer la suggestion surlignée quand elle complète le mot tapé, ou après ↑ / ↓ ; sinon la commande part comme d'habitude |
 | Échap | Fermer la liste jusqu'à la prochaine frappe |
 | Ctrl+Espace | Rouvrir la liste fermée avec Échap |
+| → | Accepter la suggestion en gris |
+
+La suggestion en gris, après le curseur, est la commande la plus récente de l'historique qui
+prolonge la ligne. Elle s'affiche dans le terminal, même avec la fenêtre flottante, et seulement
+quand le curseur est en fin de ligne ; → l'accepte, sinon → déplace le curseur comme d'habitude.
+Si le shell affiche déjà sa propre suggestion (prédictions de PowerShell), EasyTab n'ajoute pas
+la sienne.
 
 Quand la liste est fermée, Tab, Maj+Tab et Ctrl+Espace gardent leur comportement habituel
 (complétion du shell), sauf Ctrl+Espace juste après Échap.
@@ -55,6 +62,7 @@ overlay = true      # fenêtre flottante, ou false pour la liste dans le termina
 theme = "dark"      # ou "light"
 icons = "badges"    # ou "emoji" (liste dans le terminal)
 history = true      # proposer les commandes déjà tapées
+inline = true       # suggestion en gris après le curseur, acceptée avec →
 help = true         # commandes sans spec : options lues dans « commande --help »
 
 [keys]

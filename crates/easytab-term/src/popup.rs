@@ -64,6 +64,8 @@ pub enum Key {
     Dismiss,
     /// Ctrl+Espace : rouvre la liste fermée avec Échap.
     Open,
+    /// Flèche droite : accepte la suggestion en gris.
+    Right,
 }
 
 impl Key {
@@ -73,6 +75,7 @@ impl Key {
             // Maj+Tab remonte, comme ↑.
             b"\x1b[A" | b"\x1bOA" | b"\x1b[Z" => Some(Key::Up),
             b"\x1b[B" | b"\x1bOB" => Some(Key::Down),
+            b"\x1b[C" | b"\x1bOC" => Some(Key::Right),
             b"\t" => Some(Key::Accept),
             b"\0" => Some(Key::Open),
             b"\r" => Some(Key::Enter),
@@ -106,6 +109,7 @@ impl Key {
             return match text.as_slice() {
                 b"\x1b[A" | b"\x1bOA" | b"\x1b[Z" => Some(Key::Up),
                 b"\x1b[B" | b"\x1bOB" => Some(Key::Down),
+                b"\x1b[C" | b"\x1bOC" => Some(Key::Right),
                 b"\x1b" => Some(Key::Dismiss),
                 _ => None,
             };
@@ -121,10 +125,15 @@ impl Key {
         }
         match (record.vk, record.modifiers & MODIFIERS) {
             (VK_TAB, SHIFT) => return Some(Key::Up),
-            // Ctrl+Espace, ou Ctrl+Maj+2 (Ctrl+@) : c'est ainsi que la
-            // pseudo-console traduit l'octet NUL qu'elle reçoit.
-            (VK_SPACE, LEFT_CTRL | RIGHT_CTRL) => return Some(Key::Open),
-            (VK_2, mods) if mods & !SHIFT == LEFT_CTRL || mods & !SHIFT == RIGHT_CTRL => {
+            // Ctrl+Espace, ou Ctrl+@ : la pseudo-console traduit l'octet NUL
+            // qu'elle reçoit en Ctrl (et Maj) plus la touche du « @ », qui
+            // dépend du clavier (2 en QWERTY, 0/à en AZERTY). Toutes ces
+            // touches arrivent sans caractère.
+            (vk, mods)
+                if record.unicode == 0
+                    && matches!(mods & !SHIFT, LEFT_CTRL | RIGHT_CTRL)
+                    && is_character_key(vk) =>
+            {
                 return Some(Key::Open)
             }
             (_, 0) => {}
@@ -133,6 +142,7 @@ impl Key {
         match record.vk {
             VK_UP => Some(Key::Up),
             VK_DOWN => Some(Key::Down),
+            VK_RIGHT => Some(Key::Right),
             VK_TAB => Some(Key::Accept),
             VK_RETURN => Some(Key::Enter),
             VK_ESCAPE => Some(Key::Dismiss),
@@ -185,13 +195,13 @@ pub fn cursor_report(data: &[u8]) -> Option<(u16, u16, std::ops::Range<usize>)> 
 
 const VK_TAB: u32 = 9;
 const VK_SPACE: u32 = 32;
-const VK_2: u32 = 50;
 const VK_SHIFT: u32 = 16;
 const VK_CONTROL: u32 = 17;
 const VK_MENU: u32 = 18;
 const VK_RETURN: u32 = 13;
 const VK_ESCAPE: u32 = 27;
 const VK_UP: u32 = 38;
+const VK_RIGHT: u32 = 39;
 const VK_DOWN: u32 = 40;
 /// Maj, Ctrl et Alt dans le champ `Cs` (états des touches de contrôle).
 const MODIFIERS: u32 = 0x1f;
@@ -237,6 +247,12 @@ fn win32_records(data: &[u8]) -> Option<Vec<Win32Record>> {
     (!records.is_empty()).then_some(records)
 }
 
+/// Touche qui donne un caractère (espace, chiffres, lettres, ponctuation),
+/// par opposition aux flèches, F1… ou Échap.
+fn is_character_key(vk: u32) -> bool {
+    matches!(vk, VK_SPACE | 0x30..=0x39 | 0x41..=0x5a | 0xba..=0xc0 | 0xdb..=0xe2)
+}
+
 /// Lignes de l'écran recouvertes par la liste.
 #[derive(Debug, Clone, Copy)]
 struct Area {
@@ -260,6 +276,10 @@ pub struct Popup {
     navigated: bool,
     /// La liste est affichée dans la fenêtre flottante.
     in_overlay: bool,
+    /// Suite proposée en gris après le curseur, tirée de l'historique.
+    inline: Option<String>,
+    /// Ligne de l'écran où la suggestion en gris est dessinée.
+    inline_drawn: Option<u16>,
     /// Réglages de `~/.easytab/config.toml`.
     config: Config,
 }
@@ -297,6 +317,7 @@ impl Popup {
         self.last_input = input.clone();
         self.selected = 0;
         self.scroll = 0;
+        self.inline = None;
 
         let Some(input) = input else {
             return;
@@ -307,6 +328,9 @@ impl Popup {
         self.dismissed_for = None;
         if input.trim().is_empty() || input.contains('\n') {
             return;
+        }
+        if self.config.list.inline {
+            self.inline = completer.inline(&input);
         }
         let completion = completer.complete(&input, session.cwd().unwrap_or(fallback_cwd));
         let only_exact = matches!(
@@ -353,6 +377,7 @@ impl Popup {
             // Ailleurs, Ctrl+Espace reste au shell (complétion de PowerShell).
             Key::Open => !self.is_shown() && self.is_dismissed(),
             Key::Enter => self.is_shown() && self.enter_inserts(),
+            Key::Right => self.inline_drawn.is_some(),
             _ => self.is_shown(),
         }
     }
@@ -391,6 +416,54 @@ impl Popup {
     pub fn dismiss(&mut self) {
         self.dismissed_for = self.last_input.clone();
         self.completion = None;
+        self.inline = None;
+    }
+
+    /// Octets à envoyer au shell pour accepter la suggestion en gris.
+    pub fn accept_inline(&mut self) -> Option<Vec<u8>> {
+        let rest = self.inline.take()?;
+        self.completion = None;
+        // La ligne change : la prochaine mise à jour recalculera la liste.
+        self.last_input = None;
+        Some(rest.into_bytes())
+    }
+
+    /// Dessine la suggestion en gris après le curseur, si le reste de la
+    /// ligne est vide (sinon le curseur n'est pas en fin de saisie).
+    pub fn draw_inline(&mut self, screen: &vt100::Screen, out: &mut Vec<u8>) {
+        let Some(rest) = &self.inline else {
+            return;
+        };
+        let (_, cols) = screen.size();
+        let (row, col) = screen.cursor_position();
+        let line_is_empty = (col..cols).all(|c| {
+            screen
+                .cell(row, c)
+                .is_none_or(|cell| cell.contents().trim().is_empty())
+        });
+        let text = fit_cut(rest, (cols - col) as usize);
+        if !line_is_empty || text.is_empty() {
+            return;
+        }
+        out.extend_from_slice(b"\x1b[?25l\x1b[0m\x1b[90m");
+        out.extend_from_slice(text.as_bytes());
+        restore_cursor(screen, out);
+        self.inline_drawn = Some(row);
+    }
+
+    /// Efface la suggestion en gris : redessine sa ligne d'après la copie de
+    /// l'écran.
+    pub fn erase_inline(&mut self, screen: &vt100::Screen, out: &mut Vec<u8>) {
+        let Some(row) = self.inline_drawn.take() else {
+            return;
+        };
+        let (_, cols) = screen.size();
+        if let Some(line) = screen.rows_formatted(0, cols).nth(row as usize) {
+            goto(out, row, 0);
+            out.extend_from_slice(b"\x1b[0m\x1b[2K");
+            out.extend_from_slice(&line);
+        }
+        restore_cursor(screen, out);
     }
 
     /// Octets à envoyer au shell pour insérer la suggestion choisie.
@@ -747,6 +820,22 @@ fn fit(text: &str, width: usize) -> String {
     out
 }
 
+/// Les premiers caractères de `text` qui tiennent en `width` colonnes, sans
+/// « … » (la suite en gris s'arrête simplement au bord).
+fn fit_cut(text: &str, width: usize) -> String {
+    let mut out = String::new();
+    let mut used = 0;
+    for c in text.chars() {
+        let w = c.width().unwrap_or(0);
+        if used + w > width || c.is_control() {
+            break;
+        }
+        used += w;
+        out.push(c);
+    }
+    out
+}
+
 fn goto(out: &mut Vec<u8>, row: u16, col: u16) {
     let _ = write!(out, "\x1b[{};{}H", row + 1, col + 1);
 }
@@ -789,6 +878,7 @@ mod tests {
         assert_eq!(Key::parse(b"\x1b"), Some(Key::Dismiss));
         assert_eq!(Key::parse(b"\r"), Some(Key::Enter));
         assert_eq!(Key::parse(b"\x1b[Z"), Some(Key::Up));
+        assert_eq!(Key::parse(b"\x1b[C"), Some(Key::Right));
         assert_eq!(Key::parse(b"\0"), Some(Key::Open));
         assert_eq!(Key::parse(b"a"), None);
     }
@@ -850,6 +940,11 @@ mod tests {
         );
         // Ctrl+2 envoie aussi NUL dans les terminaux.
         assert_eq!(Key::parse(b"\x1b[50;3;0;1;8;1_"), Some(Key::Open));
+        // NUL traduit sur un clavier AZERTY : Ctrl + touche 0/à/@.
+        assert_eq!(Key::parse(b"\x1b[48;11;0;1;8;1_"), Some(Key::Open));
+        // Ctrl+A donne un caractère (0x01) ; AltGr (Ctrl+Alt) n'est pas Ctrl.
+        assert_eq!(Key::parse(b"\x1b[65;30;1;1;8;1_"), None);
+        assert_eq!(Key::parse(b"\x1b[48;11;64;1;10;1_"), None);
         assert_eq!(Key::parse(b"\x1b[65;30;97;1;0;1_"), None);
         assert_eq!(Key::parse(b"\x1b[1;5A"), None);
 
@@ -946,6 +1041,31 @@ mod tests {
         popup.erase(session.screen(), &mut out);
         assert!(!popup.is_shown());
         assert!(String::from_utf8_lossy(&out).contains("\x1b[2;1H"));
+    }
+
+    #[test]
+    fn draws_and_accepts_the_inline_suggestion() {
+        let completer = Completer::builtin();
+        completer.record("echo easytab-inline");
+        let session = session_with(b"echo eas");
+        let mut popup = Popup::default();
+        popup.update(&session, &completer, Path::new("/"));
+        assert!(!popup.handles(Key::Right));
+        let mut out = Vec::new();
+        popup.draw_inline(session.screen(), &mut out);
+        assert!(String::from_utf8_lossy(&out).contains("ytab-inline"));
+        assert!(popup.handles(Key::Right));
+        assert_eq!(popup.accept_inline().as_deref(), Some(&b"ytab-inline"[..]));
+
+        // Du texte après le curseur : il n'est pas en fin de saisie.
+        let mut session = session_with(b"echo eas x");
+        session.feed_output(b"\x1b[2D");
+        let mut popup = Popup::default();
+        popup.update(&session, &completer, Path::new("/"));
+        let mut out = Vec::new();
+        popup.draw_inline(session.screen(), &mut out);
+        assert!(out.is_empty());
+        assert!(!popup.handles(Key::Right));
     }
 
     #[test]

@@ -32,6 +32,10 @@ pub const TEMPLATE: &str = r##"# EasyTab settings. Remove the "#" in front of a 
 # Suggest commands typed before (shell history).
 # history = true
 
+# Grey suggestion after the cursor, taken from the history: Right arrow
+# accepts it.
+# inline = true
+
 # Commands without a spec: read their options from "command --help"
 # (run once in the background, answer kept in ~/.easytab/cache).
 # help = true
@@ -63,6 +67,10 @@ pub const TEMPLATE_FR: &str = r#"# Réglages d'EasyTab. Retirez le « # » devan
 # Proposer les commandes déjà tapées (historique du shell).
 # history = true
 
+# Suggestion en gris après le curseur, tirée de l'historique : la flèche
+# droite l'accepte.
+# inline = true
+
 # Commandes sans spec : lire leurs options dans « commande --help »
 # (lancé une fois en arrière-plan, réponse gardée dans ~/.easytab/cache).
 # help = true
@@ -89,6 +97,8 @@ pub struct List {
     pub theme: Theme,
     pub icons: Icons,
     pub history: bool,
+    /// Suggestion en gris après le curseur.
+    pub inline: bool,
     pub help: bool,
 }
 
@@ -125,6 +135,7 @@ impl Default for List {
             theme: Theme::Dark,
             icons: Icons::Badges,
             history: true,
+            inline: true,
             help: true,
         }
     }
@@ -208,6 +219,7 @@ mod tests {
                 .replace("# theme", "theme")
                 .replace("# icons", "icons")
                 .replace("# history", "history")
+                .replace("# inline", "inline")
                 .replace("# help", "help")
                 .replace("# enter_inserts", "enter_inserts");
             assert_eq!(Config::parse(&uncommented).unwrap(), Config::default());
@@ -218,7 +230,7 @@ mod tests {
     #[test]
     fn reads_settings() {
         let config = Config::parse(
-            "[list]\nrows = 12\noverlay = false\ntheme = \"light\"\nicons = \"emoji\"\nhelp = false\n\
+            "[list]\nrows = 12\noverlay = false\ntheme = \"light\"\nicons = \"emoji\"\nhelp = false\ninline = false\n\
              [keys]\nenter_inserts = false\n",
         )
         .unwrap();
@@ -227,6 +239,7 @@ mod tests {
         assert_eq!(config.list.theme, Theme::Light);
         assert_eq!(config.list.icons, Icons::Emoji);
         assert!(!config.list.help);
+        assert!(!config.list.inline);
         assert!(!config.keys.enter_inserts);
     }
 
