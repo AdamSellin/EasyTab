@@ -297,6 +297,9 @@ pub struct Popup {
     /// Correction de la commande qui vient d'échouer, proposée sur la ligne
     /// vide du prompt suivant.
     correction: Option<String>,
+    /// Commande qui suit d'habitude celle qui vient de réussir (`git push`
+    /// après `git commit`), proposée de la même façon.
+    next: Option<String>,
     /// Workflow en cours de remplissage.
     fill: Option<Fill>,
     /// Ligne de l'écran où la suggestion en gris est dessinée.
@@ -354,13 +357,21 @@ impl Popup {
         let completion = if self.search {
             completer.search(&input)
         } else if input.trim().is_empty() {
-            self.inline = self.correction.as_ref().map(|correction| Inline {
-                shown: format!("{correction}   [→ {}]", tr("fix", "corriger")),
-                accept: Some(correction.clone()),
-            });
+            self.inline = match (&self.correction, &self.next) {
+                (Some(correction), _) => Some(Inline {
+                    shown: format!("{correction}   [→ {}]", tr("fix", "corriger")),
+                    accept: Some(correction.clone()),
+                }),
+                (None, Some(next)) => Some(Inline {
+                    shown: format!("{next}   [→]"),
+                    accept: Some(next.clone()),
+                }),
+                (None, None) => None,
+            };
             return;
         } else {
             self.correction = None;
+            self.next = None;
             if let Some(fill) = &self.fill {
                 self.inline = fill.hint(&input).map(|hint| Inline {
                     shown: hint.shown,
@@ -482,11 +493,17 @@ impl Popup {
         self.correction = correction.filter(|_| self.config.list.correct);
     }
 
+    /// Commande à proposer au prompt suivant (après une commande réussie).
+    pub fn set_next(&mut self, next: Option<String>) {
+        self.next = next.filter(|_| self.config.list.next);
+    }
+
     /// La ligne part au shell : la recherche, la correction et le workflow en
     /// cours s'arrêtent.
     pub fn submitted(&mut self) {
         self.search = false;
         self.correction = None;
+        self.next = None;
         self.fill = None;
     }
 
@@ -495,6 +512,7 @@ impl Popup {
         let rest = self.inline.take()?.accept?;
         self.completion = None;
         self.correction = None;
+        self.next = None;
         let input = self.last_input.take().unwrap_or_default();
         if let Some(fill) = &mut self.fill {
             if !fill.advance(&input, &rest) {
@@ -1198,6 +1216,12 @@ mod tests {
         popup.update(&session_with(b"l"), &completer, Path::new("/"));
         popup.update(&session_with(b""), &completer, Path::new("/"));
         assert!(popup.inline.is_none());
+        // Après une commande réussie : la suivante habituelle.
+        popup.set_next(Some("git push".into()));
+        // Entre deux prompts, la ligne n'existe pas.
+        popup.last_input = None;
+        popup.update(&session_with(b""), &completer, Path::new("/"));
+        assert_eq!(popup.accept_inline().as_deref(), Some(&b"git push"[..]));
     }
 
     #[test]

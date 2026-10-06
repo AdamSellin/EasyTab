@@ -336,6 +336,38 @@ impl Completer {
         )
     }
 
+    /// Commande à proposer après une commande réussie : `git push` après
+    /// `git commit`, `git push origin v1.2` après `git tag v1.2`,
+    /// `git push -u origin nom` après une nouvelle branche.
+    pub fn next_command(&self, input: &str, exit_code: i32) -> Option<String> {
+        if exit_code != 0 || input.contains(['|', ';', '&', '\n']) {
+            return None;
+        }
+        let line = line::parse(input);
+        let mut words = line.words;
+        if !line.current.raw.is_empty() {
+            words.push(line.current);
+        }
+        let values: Vec<&str> = words.iter().map(|w| w.value.as_str()).collect();
+        let raw = |i: usize| words[i].raw.as_str();
+        match values.as_slice() {
+            ["git", "commit", rest @ ..] if !rest.contains(&"--amend") => Some("git push".into()),
+            // `git tag v1.2`, `git tag -a v1.2 -m "…"` ; pas `-d`, `-l`…
+            ["git", "tag", name] if !name.starts_with('-') => {
+                Some(format!("git push origin {}", raw(2)))
+            }
+            ["git", "tag", "-a" | "-s", name, ..] if !name.starts_with('-') => {
+                Some(format!("git push origin {}", raw(3)))
+            }
+            ["git", "switch", "-c", name] | ["git", "checkout", "-b", name]
+                if !name.starts_with('-') =>
+            {
+                Some(format!("git push -u origin {}", raw(3)))
+            }
+            _ => None,
+        }
+    }
+
     /// Le shell connaît ce nom : spec, programme du PATH, commande
     /// PowerShell ou alias.
     fn is_known_command(&self, name: &str) -> bool {
@@ -1453,6 +1485,33 @@ mod tests {
         assert_eq!(completer.correction("git zzzzzz", 1), None);
         assert_eq!(completer.correction("gti status | less", 127), None);
         assert_eq!(completer.correction("gti status", 0), None);
+    }
+
+    #[test]
+    fn suggests_the_next_command() {
+        let completer = Completer::new(Vec::new());
+        let next = |line: &str| completer.next_command(line, 0);
+        assert_eq!(
+            next("git commit -am \"Version 0.1.8\"").as_deref(),
+            Some("git push")
+        );
+        assert_eq!(
+            next("git tag v0.1.8").as_deref(),
+            Some("git push origin v0.1.8")
+        );
+        assert_eq!(
+            next("git tag -a v2 -m \"Deux\"").as_deref(),
+            Some("git push origin v2")
+        );
+        assert_eq!(
+            next("git switch -c correctif").as_deref(),
+            Some("git push -u origin correctif")
+        );
+        assert_eq!(next("git commit --amend"), None);
+        assert_eq!(next("git tag -d v1"), None);
+        assert_eq!(next("git tag"), None);
+        assert_eq!(next("git status"), None);
+        assert_eq!(completer.next_command("git commit -m x", 1), None);
     }
 
     #[test]
