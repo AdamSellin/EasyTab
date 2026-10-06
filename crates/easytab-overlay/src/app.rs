@@ -42,6 +42,16 @@ struct Popup {
 }
 
 pub fn run() -> anyhow::Result<()> {
+    // Avant tout fil : `set_var` n'est sûr que dans un programme à un seul fil.
+    let data_dir = dirs::data_local_dir().map(|dir| dir.join("EasyTab").join("webview"));
+    if let Some(dir) = &data_dir {
+        // WebView2 lit aussi cette variable : sans elle, une partie de ses
+        // données peut atterrir à côté du programme
+        // (`easytab-overlay.exe.WebView2` dans `~/.easytab/bin`).
+        std::env::set_var("WEBVIEW2_USER_DATA_FOLDER", dir);
+    }
+    remove_stray_webview_data();
+
     let event_loop = platform::event_loop::<UserEvent>()?;
 
     let proxy = event_loop.create_proxy();
@@ -91,8 +101,7 @@ pub fn run() -> anyhow::Result<()> {
     // Fenêtre jamais active, que les clics traversent.
     let surface = Surface::new(&window);
 
-    let mut context =
-        WebContext::new(dirs::data_local_dir().map(|dir| dir.join("EasyTab").join("webview")));
+    let mut context = WebContext::new(data_dir);
     let proxy = event_loop.create_proxy();
     let builder = WebViewBuilder::new_with_web_context(&mut context)
         .with_transparent(true)
@@ -304,4 +313,23 @@ fn send(event: Event) {
         let mut stdout = std::io::stdout().lock();
         let _ = writeln!(stdout, "{line}").and_then(|_| stdout.flush());
     }
+}
+
+/// Efface le dossier `easytab-overlay.exe.WebView2` qu'une ancienne version a
+/// pu laisser à côté du programme installé. Les données de la page vivent
+/// dans le dossier local de l'utilisateur (`EasyTab/webview`).
+fn remove_stray_webview_data() {
+    let Ok(exe) = std::env::current_exe() else {
+        return;
+    };
+    // Seulement dans le dossier d'installation, pas dans celui de compilation.
+    let installed = exe
+        .parent()
+        .is_some_and(|dir| dir.ends_with(std::path::Path::new(".easytab").join("bin")));
+    if !installed {
+        return;
+    }
+    let mut stray = exe.into_os_string();
+    stray.push(".WebView2");
+    let _ = std::fs::remove_dir_all(stray);
 }
