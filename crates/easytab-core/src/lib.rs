@@ -8,7 +8,8 @@
 //!   complétion (format Fig).
 //! - [`Generators`] calcule en arrière-plan les suggestions dynamiques (branches
 //!   git, scripts npm…) en exécutant le JavaScript des specs.
-//! - Sans spec, les options d'une commande sont lues dans son `--help`
+//! - Sans spec, une commande est complétée par bash-completion ou fish
+//!   ([`ShellCompletions`]), sinon ses options sont lues dans son `--help`
 //!   ([`HelpSpecs`]) ; les specs de `~/.easytab/specs` passent avant celles
 //!   embarquées ([`spec::custom`]).
 
@@ -27,6 +28,7 @@ mod project;
 pub mod pwsh;
 mod rank;
 mod session;
+pub mod shell;
 pub mod spec;
 
 pub use complete::{Completer, Completion, Kind, Suggestion};
@@ -38,3 +40,4 @@ pub use osc::{Marker, OscScanner};
 pub use pwsh::PowerShell;
 pub use rank::Usage;
 pub use session::{Phase, Session};
+pub use shell::ShellCompletions;

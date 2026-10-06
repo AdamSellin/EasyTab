@@ -63,6 +63,7 @@ theme = "dark"      # ou "light"
 icons = "badges"    # ou "emoji" (liste dans le terminal)
 history = true      # proposer les commandes déjà tapées
 inline = true       # suggestion en gris après le curseur, acceptée avec →
+shell = true        # commandes sans spec : complétions de bash-completion ou fish
 help = true         # commandes sans spec : options lues dans « commande --help »
 
 [keys]
@@ -138,14 +139,22 @@ PowerShell lui-même (`Get-Command`), lancé une fois en arrière-plan. Les alia
 (`ls -Recurse`) : dans PowerShell, `ls` est `Get-ChildItem`, pas le `ls` d'Unix. Un alias vers
 un programme (`g` → `git`) reçoit sa spec.
 
-**`--help`.** Pour une commande installée qui n'a pas de spec, EasyTab lance une fois
-`commande --help` en arrière-plan (3 secondes au plus, depuis le dossier temporaire) et en tire
-ses options (`-x, --option=VALEUR  description`). La réponse est gardée dans
-`~/.easytab/cache/help.json` tant que le programme ne change pas. Seules les commandes du PATH
-sont interrogées, jamais `rm`, `dd`, `shutdown`, `reboot`, `halt`, `poweroff`, `mkfs`, `format`,
-ni les scripts `.bat` / `.cmd` sous Windows ; une sortie qui ne ressemble pas à une aide (code de
-sortie autre que 0 ou 1, moins de deux options) est ignorée. `help = false` dans les réglages le
-désactive.
+**Complétions du shell.** Pour une commande sans spec, EasyTab demande à fish puis à
+bash-completion, s'ils sont installés, ce qu'ils proposeraient après Tab : `fish -c 'complete -C …'`
+(avec les descriptions), puis la fonction de complétion que bash-completion déclare pour la
+commande (y compris celles de l'utilisateur, dans `~/.local/share/bash-completion/completions`).
+Ils sont lancés en arrière-plan, sans la configuration de l'utilisateur, 2 secondes au plus ; la
+réponse est gardée par dossier et par ligne. Une commande qu'aucun des deux ne connaît passe au
+`--help`. Sous Windows, seulement dans Git Bash ; jamais dans PowerShell, qui décrit ses commandes
+lui-même. `shell = false` dans les réglages le désactive.
+
+**`--help`.** Pour une commande installée qui n'a pas de spec ni de complétion du shell, EasyTab
+lance une fois `commande --help` en arrière-plan (3 secondes au plus, depuis le dossier temporaire)
+et en tire ses options (`-x, --option=VALEUR  description`). La réponse est gardée dans
+`~/.easytab/cache/help.json` tant que le programme ne change pas. Seules les commandes du PATH sont
+interrogées, jamais `rm`, `dd`, `shutdown`, `reboot`, `halt`, `poweroff`, `mkfs`, `format`, ni les
+scripts `.bat` / `.cmd` sous Windows ; une sortie qui ne ressemble pas à une aide (code de sortie
+autre que 0 ou 1, moins de deux options) est ignorée. `help = false` dans les réglages le désactive.
 
 ### Specs personnelles
 

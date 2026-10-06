@@ -545,6 +545,37 @@ fn bash_follows_aliases_and_variables() {
     });
 }
 
+/// Une commande sans spec se complète comme bash-completion le ferait, ici
+/// par un fichier de complétion de l'utilisateur.
+#[cfg(unix)]
+#[test]
+fn bash_completion_covers_commands_without_spec() {
+    if !Path::new("/usr/share/bash-completion/bash_completion").is_file() {
+        eprintln!("bash-completion absent : test ignoré");
+        return;
+    }
+    let Some(mut term) = start_bash("bash-completion", |home| {
+        let dir = home.join(".local/share/bash-completion/completions");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("easytab-outil"),
+            "_easytab_outil() { COMPREPLY=($(compgen -W 'deploy destroy' -- \"$2\")); }\n\
+             complete -F _easytab_outil easytab-outil\n",
+        )
+        .unwrap();
+    }) else {
+        return;
+    };
+    term.send(b"easytab-outil dep");
+    term.wait_for("la complétion de bash", |t| {
+        t.screen().contains("deploy") && t.cursor_line() == "$ easytab-outil dep"
+    });
+    term.send(b"\t");
+    term.wait_for("la ligne complétée", |t| {
+        t.cursor_line() == "$ easytab-outil deploy"
+    });
+}
+
 /// La commande la plus récente de l'historique qui prolonge la ligne
 /// s'affiche en gris après le curseur ; → l'accepte.
 #[test]

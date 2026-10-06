@@ -14,6 +14,7 @@ use crate::line::{self, Token};
 use crate::project;
 use crate::pwsh::PowerShell;
 use crate::rank::{self, best_match, Usage, LOOSE_RANK};
+use crate::shell::{self, ShellCompletions};
 use crate::spec::{self, Arg, Command, Generator, Opt, Spec, Template};
 
 /// Nombre maximum de suggestions renvoyées.
@@ -69,7 +70,9 @@ pub struct Completer {
     installed: Option<OnceLock<HashSet<String>>>,
     /// Le shell est PowerShell : ses commandes sont décrites par lui-même.
     powershell: Option<PowerShell>,
-    /// Les commandes sans spec sont décrites par leur `--help`.
+    /// Les commandes sans spec sont complétées par bash ou fish…
+    shell: Option<ShellCompletions>,
+    /// … sinon décrites par leur `--help`.
     help: Option<HelpSpecs>,
     /// Les specs à partir de cet indice sont celles de l'utilisateur.
     custom_from: usize,
@@ -133,6 +136,7 @@ impl Completer {
             commands,
             installed: None,
             powershell: None,
+            shell: None,
             help: None,
             custom_from: usize::MAX,
             by_name,
@@ -226,6 +230,12 @@ impl Completer {
             }
             self.commands.push(spec);
         }
+        self
+    }
+
+    /// Demande à bash ou fish de compléter les commandes sans spec.
+    pub fn with_shell(mut self, shell: ShellCompletions) -> Self {
+        self.shell = Some(shell);
         self
     }
 
@@ -400,7 +410,8 @@ impl Completer {
             self.push_commands(&current.value, out);
             return;
         };
-        // Une spec de l'utilisateur ou embarquée, sinon PowerShell, sinon `--help`.
+        // Une spec de l'utilisateur ou embarquée, sinon PowerShell, sinon le
+        // shell (bash, fish), sinon `--help`.
         let alias = self
             .powershell
             .as_ref()
@@ -413,14 +424,17 @@ impl Completer {
             Some((powershell, target)) => {
                 self.find(&target).or_else(|| powershell.spec(&name.value))
             }
-            None => self
-                .find(&name.value)
-                .or_else(|| {
+            None => {
+                let spec = self.find(&name.value).or_else(|| {
                     self.powershell
                         .as_ref()
                         .and_then(|powershell| powershell.spec(&name.value))
-                })
-                .or_else(|| self.help.as_ref().and_then(|help| help.spec(&name.value))),
+                });
+                if spec.is_none() && self.complete_with_shell(words, current, context, out) {
+                    return;
+                }
+                spec.or_else(|| self.help.as_ref().and_then(|help| help.spec(&name.value)))
+            }
         };
         let Some(spec) = spec else {
             return;
@@ -438,6 +452,65 @@ impl Completer {
             options_done: false,
         };
         self.enter(spec, rest, walk, context, out);
+    }
+
+    /// Complétions de bash ou fish pour une commande sans spec. `false` si
+    /// aucun ne la connaît ou ne propose rien : le `--help` prend le relais.
+    fn complete_with_shell(
+        &self,
+        words: &[Token],
+        current: &Token,
+        context: &mut Context,
+        out: &mut Vec<Suggestion>,
+    ) -> bool {
+        let Some(completions) = &self.shell else {
+            return false;
+        };
+        let items = match completions.lookup(words, current, context.cwd) {
+            shell::Lookup::Ready(items) if !items.is_empty() => items,
+            shell::Lookup::Pending => {
+                context.pending = true;
+                return true;
+            }
+            _ => return false,
+        };
+        context.tokens = words
+            .iter()
+            .chain([current])
+            .map(|t| t.value.clone())
+            .collect();
+        let prefix = &current.value;
+        let mut found: Vec<Suggestion> = items
+            .into_iter()
+            .filter_map(|item| {
+                let rank = rank::match_rank(&item.value, prefix)?;
+                // bash renvoie les dossiers sans `/` final.
+                let value = item.value.trim_end_matches('/');
+                let path = context.cwd.join(value);
+                let (kind, insert) = if value.starts_with('-') {
+                    (Kind::Option, line::escape(value))
+                } else if !value.is_empty() && path.is_dir() {
+                    (Kind::Folder, format!("{}/", line::escape(value)))
+                } else if path.is_file() {
+                    (Kind::File, line::escape(value))
+                } else {
+                    (Kind::Value, line::escape(&item.value))
+                };
+                Some(Suggestion {
+                    rank,
+                    label: item.value,
+                    append_space: !insert.ends_with(['/', '=']),
+                    insert,
+                    description: item.description,
+                    kind,
+                    hint: None,
+                    icon: None,
+                })
+            })
+            .collect();
+        sort(&mut found);
+        out.extend(found);
+        true
     }
 
     /// Entre dans `node` : suit son `loadSpec`, ajoute ce que calcule son
@@ -1933,6 +2006,47 @@ mod tests {
         )]);
         assert_eq!(labels_of(&completer, "easytab-pers"), ["easytab-perso"]);
         assert_eq!(labels_of(&completer, "easytab-perso --"), ["--perso"]);
+    }
+
+    /// Sans spec, les complétions de bash passent avant le `--help`.
+    #[cfg(unix)]
+    #[test]
+    fn asks_the_shell_for_commands_without_spec() {
+        let dir = temp_dir("shell");
+        std::fs::create_dir_all(dir.join("docs")).unwrap();
+        let Some(shell) = crate::shell::fake_bash(
+            &dir.join("bin"),
+            "_outil() { COMPREPLY=($(compgen -W \"deploy --force docs\" -- \"$2\")); }; \
+             complete -F _outil outil; complete -F _outil git",
+        ) else {
+            return;
+        };
+        let completer = Completer::builtin().with_shell(shell);
+        let complete = |input: &str| {
+            let start = std::time::Instant::now();
+            loop {
+                let completion = completer.complete(input, &dir);
+                if !completion.pending || start.elapsed().as_secs() > 10 {
+                    return completion.suggestions;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+        };
+        let found = complete("outil ");
+        let kinds: Vec<_> = found.iter().map(|s| (s.label.as_str(), s.kind)).collect();
+        assert_eq!(
+            kinds,
+            [
+                ("--force", Kind::Option),
+                ("deploy", Kind::Value),
+                ("docs", Kind::Folder)
+            ]
+        );
+        assert_eq!(found[2].insert, "docs/");
+        assert!(!found[2].append_space);
+        assert_eq!(complete("outil dep")[0].insert, "deploy");
+        // `git` a une spec : bash n'est pas interrogé.
+        assert!(!complete("git ").iter().any(|s| s.label == "deploy"));
     }
 
     /// `--help` ne sert qu'aux commandes sans spec.
