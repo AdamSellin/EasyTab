@@ -71,8 +71,8 @@ enum Command {
 
 fn shell_help() -> &'static str {
     tr(
-        "Shell to configure (default: the one in $SHELL)",
-        "Shell à configurer (par défaut : celui de $SHELL)",
+        "Shell to configure (default: the one in $SHELL, or PowerShell if it is not set)",
+        "Shell à configurer (par défaut : celui de $SHELL, ou PowerShell s'il n'est pas défini)",
     )
 }
 
@@ -148,11 +148,8 @@ impl Shell {
 
     fn detect() -> Result<Shell> {
         let shell = std::env::var("SHELL").unwrap_or_default();
-        let name = Path::new(&shell)
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or_default();
-        match Shell::ALL.into_iter().find(|s| s.name() == name) {
+        let powershell = std::env::var_os("PSModulePath").is_some();
+        match Shell::from_env(&shell, powershell) {
             Some(shell) => Ok(shell),
             None => {
                 bail!(tr!(
@@ -161,6 +158,17 @@ impl Shell {
                 ))
             }
         }
+    }
+
+    /// Shell d'après `$SHELL`. PowerShell ne le définit pas : `$SHELL` vide
+    /// avec `PSModulePath` présent (toujours le cas sous Windows) donne pwsh.
+    fn from_env(shell: &str, powershell: bool) -> Option<Shell> {
+        if shell.is_empty() && powershell {
+            return Some(Shell::Pwsh);
+        }
+        let name = Path::new(shell).file_name()?.to_str()?;
+        let name = name.strip_suffix(".exe").unwrap_or(name);
+        Shell::ALL.into_iter().find(|s| s.name() == name)
     }
 }
 
@@ -604,5 +612,17 @@ mod tests {
             short_in(Path::new("/home/adamx/.bashrc"), home),
             "/home/adamx/.bashrc"
         );
+    }
+
+    #[test]
+    fn detects_shell_from_env() {
+        let name = |shell, powershell| Shell::from_env(shell, powershell).map(Shell::name);
+        assert_eq!(name("/bin/zsh", false), Some("zsh"));
+        assert_eq!(name("/usr/bin/bash", true), Some("bash"));
+        assert_eq!(name("/usr/bin/bash.exe", true), Some("bash"));
+        // PowerShell ne définit pas $SHELL.
+        assert_eq!(name("", true), Some("pwsh"));
+        assert_eq!(name("", false), None);
+        assert_eq!(name("/bin/fish", true), None);
     }
 }
