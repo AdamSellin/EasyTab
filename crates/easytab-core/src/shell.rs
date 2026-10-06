@@ -284,7 +284,9 @@ pub(crate) fn fake_bash(dir: &Path, definitions: &str) -> Option<ShellCompletion
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
     use crate::line;
+    #[cfg(unix)]
     use std::time::Instant;
 
     #[test]
@@ -304,6 +306,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     fn wait(shell: &ShellCompletions, input: &str, cwd: &Path) -> Lookup {
         let line = line::parse(input);
         let start = Instant::now();
