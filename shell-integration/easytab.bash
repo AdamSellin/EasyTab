@@ -39,7 +39,22 @@ if [[ -n "$EASYTAB_TERM" ]]; then
     __easytab_status=$?
   }
 
+  # Envoie les alias à EasyTab (`g push` se complète comme `git push`), au
+  # premier prompt puis quand ils changent. Lus dans BASH_ALIASES, sans
+  # sous-shell : lancer un programme à chaque prompt ralentirait Git Bash.
+  __easytab_aliases_sent=
+  __easytab_send_aliases() {
+    local all="${!BASH_ALIASES[*]}=${BASH_ALIASES[*]}" name
+    [[ "$all" == "$__easytab_aliases_sent" ]] && return
+    __easytab_aliases_sent=$all
+    printf '\e]6973;aliases\a'
+    for name in "${!BASH_ALIASES[@]}"; do
+      printf '\e]6973;alias;%s=%s\a' "$name" "${BASH_ALIASES[$name]}"
+    done
+  }
+
   __easytab_prompt() {
+    __easytab_send_aliases
     printf '\e]133;D;%s\a\e]7;file://%s%s\a\e]133;A\a' "$__easytab_status" "$HOSTNAME" "${PWD// /%20}"
     # Ajouté à chaque prompt, car certains thèmes réécrivent PS1.
     [[ "$PS1" == *'\e]133;B\a'* ]] || PS1="$PS1"'\[\e]133;B\a\]'

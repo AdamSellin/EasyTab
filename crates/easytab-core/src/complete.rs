@@ -31,6 +31,8 @@ pub enum Kind {
     Dynamic,
     /// Commande entière déjà tapée, tirée de l'historique du shell.
     History,
+    /// Variable d'environnement (`$HOME`, `$env:PATH`).
+    Variable,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -81,6 +83,10 @@ pub struct Completer {
     history: Mutex<History>,
     /// Dossier de l'utilisateur (`~/.ssh/config`…).
     home: Option<PathBuf>,
+    /// Alias du shell (bash, zsh), par nom.
+    aliases: HashMap<String, String>,
+    /// Variables d'environnement reçues au démarrage, triées par nom.
+    variables: Vec<(String, String)>,
 }
 
 /// Ce que les generators ont besoin de savoir sur la ligne.
@@ -138,7 +144,18 @@ impl Completer {
             home: std::env::var_os("HOME")
                 .or_else(|| std::env::var_os("USERPROFILE"))
                 .map(PathBuf::from),
+            aliases: HashMap::new(),
+            variables: {
+                let mut variables: Vec<(String, String)> = std::env::vars().collect();
+                variables.sort();
+                variables
+            },
         }
+    }
+
+    /// Alias du shell : `g push` se complète comme `git push`.
+    pub fn set_aliases(&mut self, aliases: HashMap<String, String>) {
+        self.aliases = aliases;
     }
 
     /// Classe aussi les suggestions selon les commandes déjà exécutées.
@@ -217,6 +234,16 @@ impl Completer {
         self
     }
 
+    /// Prend `variables` comme variables d'environnement.
+    #[cfg(test)]
+    fn with_variables(mut self, variables: &[(&str, &str)]) -> Self {
+        self.variables = variables
+            .iter()
+            .map(|&(name, value)| (name.to_string(), value.to_string()))
+            .collect();
+        self
+    }
+
     /// Active les suggestions dynamiques.
     pub fn with_generators(mut self, generators: Generators) -> Self {
         self.generators = generators;
@@ -225,6 +252,16 @@ impl Completer {
 
     pub fn complete(&self, input: &str, cwd: &Path) -> Completion {
         let line = line::parse(input);
+        let powershell = self.powershell.is_some();
+        if let Some(suggestions) = complete_variable(&line.current.raw, powershell, &self.variables)
+        {
+            return Completion {
+                replace: line.current.raw,
+                suggestions,
+                pending: false,
+            };
+        }
+        let words = self.expand_aliases(&line.words);
         let mut out = Vec::new();
         let mut context = Context {
             cwd,
@@ -234,7 +271,7 @@ impl Completer {
             pending: false,
             generating: false,
         };
-        self.complete_words(&line.words, &line.current, &mut context, &mut out);
+        self.complete_words(&words, &line.current, &mut context, &mut out);
         self.rank(&context.tokens, &mut out);
         drop_loose_matches(&mut out);
         // Les commandes déjà tapées passent devant, comme dans Fig.
@@ -268,6 +305,29 @@ impl Completer {
             suggestions: out,
             pending: context.pending || context.generating,
         }
+    }
+
+    /// Remplace un alias en tête de ligne par sa valeur, comme le shell
+    /// (`g push` → `git push`), plusieurs fois au besoin (`gs` → `g status`
+    /// → `git status`). Un nom échappé ou entre guillemets (`\ls`) n'est pas
+    /// un alias.
+    fn expand_aliases(&self, words: &[Token]) -> Vec<Token> {
+        let mut words = words.to_vec();
+        let mut seen = HashSet::new();
+        while let Some(first) = words.first() {
+            let Some(value) = self.aliases.get(&first.value) else {
+                break;
+            };
+            if first.raw != first.value || !seen.insert(first.value.clone()) {
+                break;
+            }
+            let expansion = line::parse(&format!("{value} "));
+            if expansion.words.is_empty() {
+                break;
+            }
+            words.splice(0..1, expansion.words);
+        }
+        words
     }
 
     /// Trie les suggestions : d'abord la qualité de la correspondance, puis la
@@ -534,6 +594,18 @@ impl Completer {
                 })
             }));
         }
+        found.extend(self.aliases.iter().filter_map(|(name, value)| {
+            Some(Suggestion {
+                rank: rank::match_rank(name, prefix)?,
+                label: name.clone(),
+                insert: name.clone(),
+                description: Some(value.clone()),
+                kind: Kind::Command,
+                hint: None,
+                icon: None,
+                append_space: true,
+            })
+        }));
         sort(&mut found);
         found.dedup_by(|a, b| a.label == b.label);
         out.extend(found);
@@ -777,6 +849,68 @@ fn strip_cursor(insert: &str) -> String {
             format!("{}{}", &insert[..start], &insert[end..])
         }
         None => insert.to_string(),
+    }
+}
+
+/// Complète une variable d'environnement : `$HO` → `$HOME`, `${HO` →
+/// `${HOME}` ; sous PowerShell, `$env:PA` → `$env:PATH`. `None` si le mot
+/// ne se termine pas par une variable.
+fn complete_variable(
+    raw: &str,
+    powershell: bool,
+    variables: &[(String, String)],
+) -> Option<Vec<Suggestion>> {
+    let dollar = raw.rfind('$')?;
+    if raw[..dollar].ends_with('\\') {
+        return None;
+    }
+    let after = &raw[dollar + 1..];
+    let (head, close) = if powershell {
+        if !after.get(..4)?.eq_ignore_ascii_case("env:") {
+            return None;
+        }
+        (4, "")
+    } else if after.starts_with('{') {
+        (1, "}")
+    } else {
+        (0, "")
+    };
+    let typed = &after[head..];
+    let is_name = |name: &str| name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+    if !is_name(typed) {
+        return None;
+    }
+    let sigil = &raw[dollar..dollar + 1 + head];
+    let before = &raw[..dollar];
+    let mut found: Vec<Suggestion> = variables
+        .iter()
+        .filter(|(name, _)| !name.is_empty() && name != "_" && is_name(name))
+        .filter_map(|(name, value)| {
+            Some(Suggestion {
+                rank: rank::match_rank(name, typed)?,
+                label: format!("{sigil}{name}"),
+                insert: format!("{before}{sigil}{name}{close}"),
+                // Valeurs qui changent pendant la session : celle du
+                // démarrage induirait en erreur.
+                description: (!matches!(name.as_str(), "PWD" | "OLDPWD" | "SHLVL"))
+                    .then(|| shorten(value, 120)),
+                hint: None,
+                icon: None,
+                kind: Kind::Variable,
+                append_space: false,
+            })
+        })
+        .collect();
+    found.sort_by(|a, b| (a.rank, &a.label).cmp(&(b.rank, &b.label)));
+    drop_loose_matches(&mut found);
+    Some(found)
+}
+
+/// Coupe `text` à `max` caractères, avec « … » s'il est plus long.
+fn shorten(text: &str, max: usize) -> String {
+    match text.char_indices().nth(max) {
+        Some((end, _)) => format!("{}…", &text[..end]),
+        None => text.to_string(),
     }
 }
 
@@ -1025,6 +1159,81 @@ mod tests {
             .map(|s| s.label)
             .collect();
         assert_eq!(found[0], "cherry-pick", "{found:?}");
+    }
+
+    fn variables() -> Vec<(String, String)> {
+        [
+            ("HOME", "/home/adam"),
+            ("HOSTNAME", "pc"),
+            ("PATH", "/usr/bin"),
+            ("PWD", "/tmp"),
+        ]
+        .iter()
+        .map(|&(n, v)| (n.to_string(), v.to_string()))
+        .collect()
+    }
+
+    fn inserts(found: Option<Vec<Suggestion>>) -> Vec<String> {
+        found.unwrap().into_iter().map(|s| s.insert).collect()
+    }
+
+    #[test]
+    fn completes_environment_variables() {
+        let vars = variables();
+        assert_eq!(
+            inserts(complete_variable("$HO", false, &vars)),
+            ["$HOME", "$HOSTNAME"]
+        );
+        assert_eq!(
+            inserts(complete_variable("\"$HO", false, &vars)),
+            ["\"$HOME", "\"$HOSTNAME"]
+        );
+        assert_eq!(
+            inserts(complete_variable("${PA", false, &vars)),
+            ["${PATH}"]
+        );
+        assert_eq!(
+            inserts(complete_variable("$env:pa", true, &vars)),
+            ["$env:PATH"]
+        );
+        let home = complete_variable("$HOM", false, &vars).unwrap();
+        assert_eq!(home[0].description.as_deref(), Some("/home/adam"));
+        assert_eq!(home[0].label, "$HOME");
+        assert!(!home[0].append_space);
+        let pwd = complete_variable("$PW", false, &vars).unwrap();
+        assert_eq!(pwd[0].description, None);
+        // Pas une variable : complétion habituelle.
+        assert!(complete_variable("$HO", true, &vars).is_none());
+        assert!(complete_variable("\\$HO", false, &vars).is_none());
+        assert!(complete_variable("$?", false, &vars).is_none());
+        assert!(complete_variable("src/", false, &vars).is_none());
+
+        let completer = Completer::builtin().with_variables(&[("HOME", "/home/adam")]);
+        let found = completer.complete("cd $HO", Path::new("/nonexistent"));
+        assert_eq!(found.replace, "$HO");
+        assert_eq!(found.suggestions[0].kind, Kind::Variable);
+    }
+
+    #[test]
+    fn follows_shell_aliases() {
+        let mut completer = Completer::new(vec![command(
+            r#"{"names": ["git"], "subcommands": [{"names": ["push"]},
+                {"names": ["status"], "options": [{"names": ["--short"]}]}]}"#,
+        )]);
+        completer.set_aliases(HashMap::from([
+            ("g".to_string(), "git".to_string()),
+            ("gs".to_string(), "g status".to_string()),
+            ("git".to_string(), "git".to_string()),
+        ]));
+        assert_eq!(labels_of(&completer, "g pu"), ["push"]);
+        assert_eq!(labels_of(&completer, "gs --sh"), ["--short"]);
+        assert_eq!(labels_of(&completer, "git pu"), ["push"]);
+        // `\g` contourne l'alias.
+        assert!(labels_of(&completer, "\\g pu").is_empty());
+        // Les alias sont proposés comme commandes, avec leur valeur.
+        let found = completer.complete("gs", Path::new("/nonexistent"));
+        let alias = found.suggestions.iter().find(|s| s.label == "gs").unwrap();
+        assert_eq!(alias.description.as_deref(), Some("g status"));
     }
 
     #[test]

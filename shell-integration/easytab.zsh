@@ -20,8 +20,22 @@ fi
 
 # 2. Sous EasyTab : émet les marqueurs de prompt (OSC 133) et le dossier courant (OSC 7).
 if [[ -n "$EASYTAB_TERM" ]]; then
+  # Envoie les alias à EasyTab (`g push` se complète comme `git push`), au
+  # premier prompt puis quand ils changent.
+  __easytab_aliases_sent=
+  __easytab_send_aliases() {
+    local all="${(kv)aliases}" name
+    [[ "$all" == "$__easytab_aliases_sent" ]] && return
+    __easytab_aliases_sent=$all
+    print -n "\e]6973;aliases\a"
+    for name in ${(k)aliases}; do
+      print -rn -- $'\e]6973;alias;'"${name}=${aliases[$name]}"$'\a'
+    done
+  }
+
   __easytab_precmd() {
     local code=$?
+    __easytab_send_aliases
     print -n "\e]133;D;${code}\a\e]7;file://${HOST}${PWD// /%20}\a\e]133;A\a"
     # Ajouté à chaque prompt, car certains thèmes réécrivent PS1.
     [[ "$PS1" == *$'\e]133;B\a'* ]] || PS1="${PS1}%{"$'\e]133;B\a'"%}"

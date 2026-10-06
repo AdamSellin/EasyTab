@@ -1,7 +1,8 @@
 //! `easytab-term` : lance le shell dans un pseudo-terminal et relaie tout entre
 //! le vrai terminal et ce shell, en gardant une copie de l'écran pour savoir ce
 //! que l'utilisateur tape. Il affiche la liste de suggestions par-dessus et
-//! intercepte ↑, ↓, Tab, Entrée (après ↑/↓) et Échap quand elle est visible.
+//! intercepte ↑, ↓, Maj+Tab, Tab, Entrée (après ↑/↓) et Échap quand elle est
+//! visible, et Ctrl+Espace après Échap pour la rouvrir.
 
 mod overlay;
 mod popup;
@@ -301,6 +302,11 @@ fn run(args: Args) -> Result<i32> {
             {
                 let mut shared = input_shared.lock().unwrap();
                 match Key::parse(data).filter(|&key| shared.popup.handles(key)) {
+                    Some(Key::Open) => {
+                        to_shell.clear();
+                        shared.popup.reopen();
+                        shared.refresh(&mut frame);
+                    }
                     Some(key) => {
                         shared.hide(&mut frame);
                         to_shell.clear();
@@ -309,6 +315,7 @@ fn run(args: Args) -> Result<i32> {
                             Key::Up => popup.select(-1),
                             Key::Down => popup.select(1),
                             Key::Dismiss => popup.dismiss(),
+                            Key::Open => {}
                             Key::Accept | Key::Enter => {
                                 to_shell = popup.accept().unwrap_or_default()
                             }
@@ -433,6 +440,9 @@ fn run(args: Args) -> Result<i32> {
             shared.hide(&mut frame);
             frame.extend_from_slice(&buf[..n]);
             shared.session.feed_output(&buf[..n]);
+            if let Some(aliases) = shared.session.take_aliases() {
+                shared.completer.set_aliases(aliases);
+            }
             shared.last_output = Instant::now();
             let output = &buf[..n];
             if contains(output, FOCUS_ON) {

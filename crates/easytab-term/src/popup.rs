@@ -62,15 +62,19 @@ pub enum Key {
     /// avec ↑/↓ ; sinon la commande part normalement.
     Enter,
     Dismiss,
+    /// Ctrl+Espace : rouvre la liste fermée avec Échap.
+    Open,
 }
 
 impl Key {
     /// Touches gérées par la liste quand elle est affichée.
     pub fn parse(data: &[u8]) -> Option<Key> {
         match data {
-            b"\x1b[A" | b"\x1bOA" => Some(Key::Up),
+            // Maj+Tab remonte, comme ↑.
+            b"\x1b[A" | b"\x1bOA" | b"\x1b[Z" => Some(Key::Up),
             b"\x1b[B" | b"\x1bOB" => Some(Key::Down),
             b"\t" => Some(Key::Accept),
+            b"\0" => Some(Key::Open),
             b"\r" => Some(Key::Enter),
             b"\x1b" => Some(Key::Dismiss),
             _ => Self::parse_win32(data),
@@ -100,16 +104,31 @@ impl Key {
                 .collect();
             let text = text?;
             return match text.as_slice() {
-                b"\x1b[A" | b"\x1bOA" => Some(Key::Up),
+                b"\x1b[A" | b"\x1bOA" | b"\x1b[Z" => Some(Key::Up),
                 b"\x1b[B" | b"\x1bOB" => Some(Key::Down),
                 b"\x1b" => Some(Key::Dismiss),
                 _ => None,
             };
         }
-        let mut pressed = records.iter().filter(|r| r.down);
+        // Maj, Ctrl et Alt arrivent aussi comme touches à part : seule compte
+        // celle qu'ils modifient.
+        let mut pressed = records
+            .iter()
+            .filter(|r| r.down && !matches!(r.vk, VK_SHIFT | VK_CONTROL | VK_MENU));
         let record = pressed.next()?;
-        if pressed.next().is_some() || record.modifiers & MODIFIERS != 0 {
+        if pressed.next().is_some() {
             return None;
+        }
+        match (record.vk, record.modifiers & MODIFIERS) {
+            (VK_TAB, SHIFT) => return Some(Key::Up),
+            // Ctrl+Espace, ou Ctrl+Maj+2 (Ctrl+@) : c'est ainsi que la
+            // pseudo-console traduit l'octet NUL qu'elle reçoit.
+            (VK_SPACE, LEFT_CTRL | RIGHT_CTRL) => return Some(Key::Open),
+            (VK_2, mods) if mods & !SHIFT == LEFT_CTRL || mods & !SHIFT == RIGHT_CTRL => {
+                return Some(Key::Open)
+            }
+            (_, 0) => {}
+            _ => return None,
         }
         match record.vk {
             VK_UP => Some(Key::Up),
@@ -165,12 +184,20 @@ pub fn cursor_report(data: &[u8]) -> Option<(u16, u16, std::ops::Range<usize>)> 
 }
 
 const VK_TAB: u32 = 9;
+const VK_SPACE: u32 = 32;
+const VK_2: u32 = 50;
+const VK_SHIFT: u32 = 16;
+const VK_CONTROL: u32 = 17;
+const VK_MENU: u32 = 18;
 const VK_RETURN: u32 = 13;
 const VK_ESCAPE: u32 = 27;
 const VK_UP: u32 = 38;
 const VK_DOWN: u32 = 40;
 /// Maj, Ctrl et Alt dans le champ `Cs` (états des touches de contrôle).
 const MODIFIERS: u32 = 0x1f;
+const RIGHT_CTRL: u32 = 0x04;
+const LEFT_CTRL: u32 = 0x08;
+const SHIFT: u32 = 0x10;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Win32Record {
@@ -322,7 +349,23 @@ impl Popup {
 
     /// Vrai si la touche revient à la liste plutôt qu'au shell.
     pub fn handles(&self, key: Key) -> bool {
-        self.is_shown() && (key != Key::Enter || self.enter_inserts())
+        match key {
+            // Ailleurs, Ctrl+Espace reste au shell (complétion de PowerShell).
+            Key::Open => !self.is_shown() && self.is_dismissed(),
+            Key::Enter => self.is_shown() && self.enter_inserts(),
+            _ => self.is_shown(),
+        }
+    }
+
+    /// L'utilisateur a fermé la liste avec Échap pour la ligne en cours.
+    fn is_dismissed(&self) -> bool {
+        self.dismissed_for.is_some() && self.dismissed_for == self.last_input
+    }
+
+    /// Rouvre la liste fermée avec Échap : la prochaine mise à jour la recalcule.
+    pub fn reopen(&mut self) {
+        self.dismissed_for = None;
+        self.last_input = None;
     }
 
     /// Entrée insère la suggestion surlignée, comme dans Fig, quand on l'a
@@ -596,6 +639,7 @@ fn kind_name(kind: Kind) -> &'static str {
         Kind::File => "file",
         Kind::Dynamic => "dynamic",
         Kind::History => "history",
+        Kind::Variable => "variable",
     }
 }
 
@@ -618,6 +662,7 @@ fn badge(kind: Kind, icons: Icons) -> String {
         Kind::File => ('·', 243, "📄"),
         Kind::Dynamic => ('@', 166, "🌿"),
         Kind::History => ('↺', 61, "🕘"),
+        Kind::Variable => ('$', 31, "💲"),
     };
     match icons {
         Icons::Badges => format!("\x1b[0;1;38;5;231;48;5;{color}m {symbol} "),
@@ -743,6 +788,8 @@ mod tests {
         assert_eq!(Key::parse(b"\t"), Some(Key::Accept));
         assert_eq!(Key::parse(b"\x1b"), Some(Key::Dismiss));
         assert_eq!(Key::parse(b"\r"), Some(Key::Enter));
+        assert_eq!(Key::parse(b"\x1b[Z"), Some(Key::Up));
+        assert_eq!(Key::parse(b"\0"), Some(Key::Open));
         assert_eq!(Key::parse(b"a"), None);
     }
 
@@ -784,7 +831,25 @@ mod tests {
         assert_eq!(Key::parse(b"\x1b[0;0;97;1;0;1_"), None);
         // Relâchement seul, Maj+Tab, lettre : pas pour la liste.
         assert_eq!(Key::parse(b"\x1b[13;28;13;0;0;1_"), None);
-        assert_eq!(Key::parse(b"\x1b[9;15;9;1;16;1_"), None);
+        // Maj+Tab, Ctrl+Espace ; Ctrl+Tab reste au shell.
+        assert_eq!(Key::parse(b"\x1b[9;15;9;1;16;1_"), Some(Key::Up));
+        assert_eq!(Key::parse(b"\x1b[32;57;0;1;8;1_"), Some(Key::Open));
+        assert_eq!(Key::parse(b"\x1b[9;15;9;1;8;1_"), None);
+        // NUL traduit par la pseudo-console : Maj, Ctrl, puis 2.
+        assert_eq!(
+            Key::parse(
+                b"\x1b[16;42;0;1;16;1_\x1b[17;29;0;1;24;1_\x1b[50;3;0;1;24;1_\
+                  \x1b[50;3;0;0;24;1_\x1b[17;29;0;0;16;1_\x1b[16;42;0;0;0;1_"
+            ),
+            Some(Key::Open)
+        );
+        // Maj+Tab avec l'appui sur Maj dans le même envoi.
+        assert_eq!(
+            Key::parse(b"\x1b[16;42;0;1;16;1_\x1b[9;15;9;1;16;1_"),
+            Some(Key::Up)
+        );
+        // Ctrl+2 envoie aussi NUL dans les terminaux.
+        assert_eq!(Key::parse(b"\x1b[50;3;0;1;8;1_"), Some(Key::Open));
         assert_eq!(Key::parse(b"\x1b[65;30;97;1;0;1_"), None);
         assert_eq!(Key::parse(b"\x1b[1;5A"), None);
 
@@ -881,6 +946,23 @@ mod tests {
         popup.erase(session.screen(), &mut out);
         assert!(!popup.is_shown());
         assert!(String::from_utf8_lossy(&out).contains("\x1b[2;1H"));
+    }
+
+    #[test]
+    fn ctrl_space_reopens_after_escape() {
+        let session = session_with(b"git ch");
+        let completer = Completer::builtin();
+        let mut popup = Popup::default();
+        popup.update(&session, &completer, Path::new("/"));
+        // Sans Échap, Ctrl+Espace reste au shell.
+        assert!(!popup.handles(Key::Open));
+        popup.dismiss();
+        popup.update(&session, &completer, Path::new("/"));
+        assert!(popup.handles(Key::Open));
+        popup.reopen();
+        assert!(!popup.handles(Key::Open));
+        popup.update(&session, &completer, Path::new("/"));
+        assert!(popup.accept().is_some());
     }
 
     #[test]
