@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 use tao::dpi::LogicalSize;
 use tao::event::{Event as WindowEvent, StartCause};
 use tao::event_loop::ControlFlow;
-use tao::window::{Window, WindowBuilder};
+use tao::window::{Icon, Window, WindowBuilder};
 use wry::{WebContext, WebViewBuilder};
 
 use crate::estimate::Hint;
@@ -24,6 +24,10 @@ use crate::protocol::{Event, Request, View};
 const WATCH: Duration = Duration::from_millis(150);
 /// Délai de la relecture qui suit chaque frappe.
 const SETTLE: Duration = Duration::from_millis(50);
+/// Logo d'EasyTab en 64×64, pixels RGBA bruts (`assets/easytab-64.rgba`,
+/// tiré de `docs/images/logo.png` par ImageMagick) : pas de décodeur d'image.
+const ICON_RGBA: &[u8] = include_bytes!("../../../assets/easytab-64.rgba");
+const ICON_SIZE: u32 = 64;
 
 pub enum UserEvent {
     Request(Request),
@@ -96,7 +100,8 @@ pub fn run() -> anyhow::Result<()> {
         .with_visible(false)
         .with_focused(false)
         .with_resizable(false)
-        .with_inner_size(LogicalSize::new(320.0, 240.0));
+        .with_inner_size(LogicalSize::new(320.0, 240.0))
+        .with_window_icon(Icon::from_rgba(ICON_RGBA.to_vec(), ICON_SIZE, ICON_SIZE).ok());
     let window = platform::configure(builder).build(&event_loop)?;
     // Fenêtre jamais active, que les clics traversent.
     let surface = Surface::new(&window);
@@ -332,4 +337,15 @@ fn remove_stray_webview_data() {
     let mut stray = exe.into_os_string();
     stray.push(".WebView2");
     let _ = std::fs::remove_dir_all(stray);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn icone_valide() {
+        assert_eq!(ICON_RGBA.len(), (ICON_SIZE * ICON_SIZE * 4) as usize);
+        assert!(Icon::from_rgba(ICON_RGBA.to_vec(), ICON_SIZE, ICON_SIZE).is_ok());
+    }
 }
