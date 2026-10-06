@@ -279,6 +279,65 @@ fn powershell_suggests_cmdlet_parameters() {
     });
 }
 
+/// PowerShell sous `easytab-term`, prompt affiché.
+#[cfg(windows)]
+fn start_powershell(name: &str) -> Terminal {
+    let home = temp_home(name);
+    let script = home.join("easytab.ps1");
+    std::fs::write(&script, integration("easytab.ps1")).unwrap();
+    let shell = if which("pwsh.exe") {
+        "pwsh.exe"
+    } else {
+        "powershell.exe"
+    };
+    let args = [
+        "-NoLogo".to_string(),
+        "-NoProfile".to_string(),
+        "-NoExit".to_string(),
+        "-Command".to_string(),
+        format!(". '{}'", script.display()),
+    ];
+    let mut term = Terminal::start(shell, &args, &home);
+    term.wait_for("le prompt PowerShell", |t| t.cursor_line().ends_with('>'));
+    term
+}
+
+/// Un alias PowerShell reçoit les paramètres de sa cmdlet : `ls` est
+/// Get-ChildItem, pas le `ls` d'Unix.
+#[cfg(windows)]
+#[test]
+fn powershell_aliases_get_cmdlet_parameters() {
+    let mut term = start_powershell("pwsh-alias");
+    term.send(b"ls -Recu");
+    term.wait_for("le paramètre -Recurse de ls", |t| {
+        t.screen().contains("-Recurse") && !t.cursor_line().ends_with("-Recurse")
+    });
+    term.send(b"\t");
+    term.wait_for("la ligne ls -Recurse", |t| {
+        t.cursor_line().ends_with("ls -Recurse")
+    });
+}
+
+/// Specs des outils Windows : options en `/`, sans tenir compte de la casse.
+#[cfg(windows)]
+#[test]
+fn completes_windows_tools() {
+    let mut term = start_powershell("pwsh-windows-tools");
+    term.send(b"robocopy a b /mir");
+    term.wait_for("l'option /MIR", |t| t.screen().contains("/MIR"));
+    term.send(b"\t");
+    term.wait_for("la ligne robocopy a b /MIR", |t| {
+        t.cursor_line().ends_with("robocopy a b /MIR")
+    });
+    // La valeur d'une option, dans le mot suivant.
+    let mut term = start_powershell("pwsh-windows-tools-values");
+    term.send(b"tasklist /fo ");
+    term.wait_for("les formats de tasklist", |t| {
+        let screen = t.screen();
+        screen.contains("TABLE") && screen.contains("CSV")
+    });
+}
+
 #[cfg(windows)]
 fn which(program: &str) -> bool {
     std::env::var_os("PATH")

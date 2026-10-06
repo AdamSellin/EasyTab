@@ -28,7 +28,7 @@ const COMMANDS_FRESH_FOR: Duration = Duration::from_secs(24 * 3600);
 /// un alias, la commande qu'il désigne.
 const LIST_SCRIPT: &str = "Get-Command -CommandType Cmdlet,Function,Alias \
      | ForEach-Object { @{ n = $_.Name; t = [string]$_.CommandType; \
-     r = $(if ($_.CommandType -eq 'Alias') { $_.Definition }) } } \
+     r = [string]$(if ($_.CommandType -eq 'Alias') { $_.Definition }) } } \
      | ConvertTo-Json -Compress";
 
 /// Paramètres d'une commande (`{name}` est remplacé, après vérification).
@@ -64,9 +64,11 @@ struct Listed {
     name: String,
     #[serde(rename = "t", default)]
     kind: String,
-    /// Commande désignée par un alias.
+    /// Commande désignée par un alias. Toute valeur est acceptée : sans
+    /// `[string]`, Windows PowerShell 5.1 écrit `{}` pour une commande qui
+    /// n'est pas un alias, et la liste entière serait illisible.
     #[serde(rename = "r", default)]
-    target: Option<String>,
+    target: serde_json::Value,
 }
 
 /// Ce qui est gardé sur disque.
@@ -382,9 +384,9 @@ fn parse_list(json: &str) -> Option<(Vec<String>, BTreeMap<String, String>)> {
     for command in listed {
         if command.kind != "Alias" {
             names.push(command.name);
-        } else if let Some(target) = command.target.filter(|t| !t.is_empty()) {
+        } else if let Some(target) = command.target.as_str().filter(|t| !t.is_empty()) {
             if valid_name(&command.name) {
-                aliases.insert(command.name, target);
+                aliases.insert(command.name, target.to_string());
             }
         }
     }
@@ -472,10 +474,15 @@ mod tests {
             r#"[{"n":"Remove-Item","t":"Cmdlet","r":null},{"n":"ls","t":"Alias","r":"Get-ChildItem"},
                 {"n":"Get-ChildItem","t":"Cmdlet"},{"n":"Set-Location","t":"Cmdlet"},
                 {"n":"cd","t":"Alias","r":"Set-Location"},{"n":"?","t":"Alias","r":"Where-Object"},
-                {"n":"vide","t":"Alias"}]"#,
+                {"n":"vide","t":"Alias"},{"n":"Get-Date","t":"Function","r":{}},
+                {"n":"bizarre","t":"Alias","r":{}}]"#,
         )
         .unwrap();
-        assert_eq!(list, ["Get-ChildItem", "Remove-Item", "Set-Location"]);
+        // `{}` : ce qu'écrit Windows PowerShell 5.1 pour « pas d'alias ».
+        assert_eq!(
+            list,
+            ["Get-ChildItem", "Get-Date", "Remove-Item", "Set-Location"]
+        );
         let aliases: Vec<_> = aliases
             .iter()
             .map(|(a, t)| (a.as_str(), t.as_str()))
