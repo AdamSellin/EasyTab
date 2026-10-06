@@ -36,6 +36,10 @@ pub const TEMPLATE: &str = r##"# EasyTab settings. Remove the "#" in front of a 
 # accepts it.
 # inline = true
 
+# Commands without a spec: ask bash-completion or fish, when installed,
+# for the completions they know.
+# shell = true
+
 # Commands without a spec: read their options from "command --help"
 # (run once in the background, answer kept in ~/.easytab/cache).
 # help = true
@@ -71,6 +75,10 @@ pub const TEMPLATE_FR: &str = r#"# Réglages d'EasyTab. Retirez le « # » devan
 # droite l'accepte.
 # inline = true
 
+# Commandes sans spec : demander à bash-completion ou fish, s'ils sont
+# installés, les complétions qu'ils connaissent.
+# shell = true
+
 # Commandes sans spec : lire leurs options dans « commande --help »
 # (lancé une fois en arrière-plan, réponse gardée dans ~/.easytab/cache).
 # help = true
@@ -99,6 +107,8 @@ pub struct List {
     pub history: bool,
     /// Suggestion en gris après le curseur.
     pub inline: bool,
+    /// Complétions de bash ou fish pour les commandes sans spec.
+    pub shell: bool,
     pub help: bool,
 }
 
@@ -136,6 +146,7 @@ impl Default for List {
             icons: Icons::Badges,
             history: true,
             inline: true,
+            shell: true,
             help: true,
         }
     }
@@ -220,6 +231,7 @@ mod tests {
                 .replace("# icons", "icons")
                 .replace("# history", "history")
                 .replace("# inline", "inline")
+                .replace("# shell", "shell")
                 .replace("# help", "help")
                 .replace("# enter_inserts", "enter_inserts");
             assert_eq!(Config::parse(&uncommented).unwrap(), Config::default());
@@ -230,7 +242,7 @@ mod tests {
     #[test]
     fn reads_settings() {
         let config = Config::parse(
-            "[list]\nrows = 12\noverlay = false\ntheme = \"light\"\nicons = \"emoji\"\nhelp = false\ninline = false\n\
+            "[list]\nrows = 12\noverlay = false\ntheme = \"light\"\nicons = \"emoji\"\nhelp = false\ninline = false\nshell = false\n\
              [keys]\nenter_inserts = false\n",
         )
         .unwrap();
@@ -240,6 +252,7 @@ mod tests {
         assert_eq!(config.list.icons, Icons::Emoji);
         assert!(!config.list.help);
         assert!(!config.list.inline);
+        assert!(!config.list.shell);
         assert!(!config.keys.enter_inserts);
     }
 

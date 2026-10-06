@@ -35,11 +35,12 @@ cargo test
   court). `README.md` est en anglais, `README.fr.md` en français : changer les deux ensemble.
 - Ordre des specs d'une commande (`Completer::complete_words`) : `~/.easytab/specs` (`spec::custom`),
   puis, sous Windows, `specs/windows.json` (`spec::windows`, écrit à la main), puis Fig, puis
-  PowerShell (`pwsh.rs`), puis `--help` (`help.rs`). Dans PowerShell, un alias (`ls`) passe
-  avant les specs embarquées : il reçoit les paramètres de sa cmdlet. Valeurs lues dans les fichiers
-  du projet ou de l'utilisateur (Makefile, composer.json, angular.json, package.json,
-  `~/.ssh/config` et `known_hosts`) : `project.rs`, seulement là où les generators Fig ne font
-  rien ou demandent `bash`/`cat` ; leurs doublons sont écartés.
+  PowerShell (`pwsh.rs`), puis fish et bash-completion (`shell.rs`), puis `--help` (`help.rs`).
+  Dans PowerShell, un alias (`ls`) passe avant les specs embarquées : il reçoit les paramètres de
+  sa cmdlet. Valeurs lues dans les fichiers du projet ou de l'utilisateur (Makefile,
+  composer.json, angular.json, package.json, `~/.ssh/config` et `known_hosts`) : `project.rs`,
+  seulement là où les generators Fig ne font rien ou demandent `bash`/`cat` ; leurs doublons sont
+  écartés.
 
 ## Conventions
 

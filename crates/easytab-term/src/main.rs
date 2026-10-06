@@ -22,7 +22,9 @@ use crossterm::terminal;
 use easytab_core::history::{History, Shell as HistoryShell};
 use easytab_core::lang::tr;
 use easytab_core::tr;
-use easytab_core::{spec, Completer, Config, Generators, HelpSpecs, PowerShell, Session, Usage};
+use easytab_core::{
+    spec, Completer, Config, Generators, HelpSpecs, PowerShell, Session, ShellCompletions, Usage,
+};
 use overlay::Overlay;
 use popup::{Key, Popup};
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
@@ -189,6 +191,18 @@ fn run(args: Args) -> Result<i32> {
             let _ = generated.lock().unwrap().send(());
         })
     });
+    // Commandes sans spec : complétions de bash-completion ou fish, avant le
+    // `--help`. Pas dans PowerShell, qui décrit lui-même ses commandes.
+    let shell_completions = (config.list.shell && !is_powershell(&shell))
+        .then(|| {
+            let generated = Mutex::new(generated.clone());
+            let bash =
+                (history_shell(&shell) == Some(HistoryShell::Bash)).then_some(shell.as_str());
+            ShellCompletions::start(bash, move || {
+                let _ = generated.lock().unwrap().send(());
+            })
+        })
+        .flatten();
     let generators = Generators::start(move || {
         let _ = generated.send(());
     });
@@ -207,6 +221,9 @@ fn run(args: Args) -> Result<i32> {
                 .with_custom(load_custom_specs())
                 .with_generators(generators)
                 .with_usage(load_usage());
+            if let Some(shell_completions) = shell_completions {
+                completer = completer.with_shell(shell_completions);
+            }
             if let Some(help) = help {
                 completer = completer.with_help(help);
             }

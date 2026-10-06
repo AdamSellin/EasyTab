@@ -30,8 +30,9 @@ options, branches git, scripts npm, fichiers… avec leur description. Tu choisi
 - **Les valeurs de ton projet** : branches, scripts de `package.json`, cibles du `Makefile`,
   hôtes SSH, conteneurs docker.
 - **Ton historique** en tête de liste, et les suggestions que tu choisis le plus souvent.
-- **Ton shell** : les alias (`g push` se complète comme `git push`) et les variables
-  d'environnement (`$HOME`).
+- **Ton shell** : les alias (`g push` se complète comme `git push`), les variables
+  d'environnement (`$HOME`) et, pour les commandes sans spec, les complétions de bash-completion
+  ou de fish.
 - **Rien à apprendre** : le terminal et le shell restent les tiens, la liste ne prend jamais le
   clavier.
 
