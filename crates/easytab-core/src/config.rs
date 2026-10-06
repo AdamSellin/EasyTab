@@ -48,6 +48,10 @@ pub const TEMPLATE: &str = r##"# EasyTab settings. Remove the "#" in front of a 
 # command in grey at the next prompt: Right arrow accepts it.
 # correct = true
 
+# After a command succeeds, suggest the usual next one in grey (git push
+# after git commit, git push origin v1.2 after git tag v1.2).
+# next = true
+
 [keys]
 # Enter inserts the highlighted suggestion when it completes the typed word
 # or was picked with Up/Down (true), or always runs the command, only Tab
@@ -96,6 +100,10 @@ pub const TEMPLATE_FR: &str = r#"# Réglages d'EasyTab. Retirez le « # » devan
 # l'accepte.
 # correct = true
 
+# Après une commande réussie, proposer en gris la suivante habituelle
+# (git push après git commit, git push origin v1.2 après git tag v1.2).
+# next = true
+
 [keys]
 # Entrée insère la suggestion surlignée quand elle complète le mot tapé ou
 # qu'on l'a choisie avec ↑/↓ (true), ou lance toujours la commande,
@@ -129,6 +137,8 @@ pub struct List {
     pub help: bool,
     /// Correction proposée après une faute de frappe.
     pub correct: bool,
+    /// Commande suivante proposée après une commande réussie.
+    pub next: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -170,6 +180,7 @@ impl Default for List {
             shell: true,
             help: true,
             correct: true,
+            next: true,
         }
     }
 }
@@ -257,6 +268,7 @@ mod tests {
                 .replace("# shell", "shell")
                 .replace("# help", "help")
                 .replace("# correct", "correct")
+                .replace("# next", "next")
                 .replace("# enter_inserts", "enter_inserts")
                 .replace("# search", "search");
             assert_eq!(Config::parse(&uncommented).unwrap(), Config::default());
@@ -268,7 +280,7 @@ mod tests {
     fn reads_settings() {
         let config = Config::parse(
             "[list]\nrows = 12\noverlay = false\ntheme = \"light\"\nicons = \"emoji\"\nhelp = false\ninline = false\nshell = false\n\
-             correct = false\n[keys]\nenter_inserts = false\nsearch = false\n",
+             correct = false\nnext = false\n[keys]\nenter_inserts = false\nsearch = false\n",
         )
         .unwrap();
         assert_eq!(config.list.rows, 12);
@@ -280,6 +292,7 @@ mod tests {
         assert!(!config.list.shell);
         assert!(!config.keys.enter_inserts);
         assert!(!config.list.correct);
+        assert!(!config.list.next);
         assert!(!config.keys.search);
     }
 

@@ -68,7 +68,7 @@ Then open a new terminal. To update: `easytab update`.
 | Enter | Write it if it completes the typed word, otherwise run the command |
 | Esc | Close the list |
 | Ctrl+Space | Open it again after Esc |
-| → | Accept the grey suggestion (history, typo fix, rest of a workflow) |
+| → | Accept the grey suggestion (history, typo fix, next command such as `git push`, rest of a workflow) |
 | Ctrl+R | Search the whole history |
 
 | Command | |

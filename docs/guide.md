@@ -46,6 +46,11 @@ inversées (deux fautes au plus pour un mot de plus de quatre lettres) ; à éga
 utilisé gagne. Rien n'est proposé pour une ligne avec `|`, `;`, `&` ou `$`. `correct = false`
 dans `[list]` le désactive.
 
+**Commande suivante.** Après une commande réussie, la suite habituelle s'affiche en gris au
+prompt suivant, et → l'accepte : `git push` après `git commit`, `git push origin v1.2` après
+`git tag v1.2` (ou `git tag -a v1.2 …`), `git push -u origin nom` après `git switch -c nom` ou
+`git checkout -b nom`. `next = false` dans `[list]` le désactive.
+
 Quand la liste est fermée, Tab, Maj+Tab et Ctrl+Espace gardent leur comportement habituel
 (complétion du shell), sauf Ctrl+Espace juste après Échap.
 
@@ -84,6 +89,7 @@ inline = true       # suggestion en gris après le curseur, acceptée avec →
 shell = true        # commandes sans spec : complétions de bash-completion ou fish
 help = true         # commandes sans spec : options lues dans « commande --help »
 correct = true      # après une faute de frappe, commande corrigée en gris au prompt suivant
+next = true         # après git commit, git push en gris au prompt suivant (et git tag…)
 
 [keys]
 enter_inserts = true  # false : Entrée lance toujours la commande, seul Tab insère

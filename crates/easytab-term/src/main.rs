@@ -497,7 +497,10 @@ fn run(args: Args) -> Result<i32> {
                     }
                     let correction =
                         exit_code.and_then(|code| shared.completer.correction(&line, code));
+                    let next =
+                        exit_code.and_then(|code| shared.completer.next_command(&line, code));
                     shared.popup.set_correction(correction);
+                    shared.popup.set_next(next);
                 }
             }
             shared.last_output = Instant::now();
