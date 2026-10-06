@@ -76,7 +76,7 @@ fn shell_help() -> &'static str {
     )
 }
 
-#[derive(Clone, Copy, ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 enum Shell {
     Zsh,
     Bash,
@@ -147,13 +147,17 @@ impl Shell {
     }
 
     fn detect() -> Result<Shell> {
-        let shell = std::env::var("SHELL").unwrap_or_default();
-        let name = Path::new(&shell)
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or_default();
+        Self::from_env(&std::env::var("SHELL").unwrap_or_default(), cfg!(windows))
+    }
+
+    /// Shell désigné par `$SHELL`. Sous Windows, PowerShell ne définit pas
+    /// `$SHELL` (Git Bash, lui, le fait) : sans elle, c'est PowerShell.
+    fn from_env(shell: &str, windows: bool) -> Result<Shell> {
+        let file = shell.rsplit(['/', '\\']).next().unwrap_or_default();
+        let name = file.strip_suffix(".exe").unwrap_or(file);
         match Shell::ALL.into_iter().find(|s| s.name() == name) {
             Some(shell) => Ok(shell),
+            None if windows && shell.is_empty() => Ok(Shell::Pwsh),
             None => {
                 bail!(tr!(
                     "unsupported shell ({shell:?}); pass --shell zsh, --shell bash or --shell pwsh",
@@ -589,6 +593,20 @@ fn short_in(path: &Path, home: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn detects_the_shell() {
+        assert_eq!(Shell::from_env("/bin/zsh", false).unwrap(), Shell::Zsh);
+        assert_eq!(Shell::from_env("/usr/bin/bash", true).unwrap(), Shell::Bash);
+        assert_eq!(
+            Shell::from_env("C:\\Git\\bin\\bash.exe", true).unwrap(),
+            Shell::Bash
+        );
+        // PowerShell ne définit pas $SHELL.
+        assert_eq!(Shell::from_env("", true).unwrap(), Shell::Pwsh);
+        assert!(Shell::from_env("", false).is_err());
+        assert!(Shell::from_env("/usr/bin/fish", true).is_err());
+    }
 
     #[test]
     fn short_replaces_home_with_tilde() {

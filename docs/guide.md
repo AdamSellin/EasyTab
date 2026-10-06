@@ -205,7 +205,7 @@ Prérequis : [Rust](https://rustup.rs) stable. Sous Windows, le toolchain MSVC
 
 ```sh
 cargo build --release
-./target/release/easytab install      # ajoute --shell pwsh pour PowerShell
+./target/release/easytab install      # le shell en cours (PowerShell sous Windows, hors Git Bash)
 # ouvre un nouveau terminal, puis :
 easytab doctor
 ```
