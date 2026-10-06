@@ -61,7 +61,8 @@ cargo test
 - Les touches peuvent arriver en `win32-input-mode` (`ESC[Vk;Sc;Uc;Kd;Cs;Rc_`) : voir `Key::parse` dans
   `crates/easytab-term/src/popup.rs`.
 - Entrée dans la liste insère la suggestion surlignée si elle complète le mot tapé (`git sta`
-  → `status`), si l'on s'est déplacé avec ↑/↓, ou juste après l'insertion d'une commande ou
+  → `status`), si l'on s'est déplacé avec ↑/↓, si c'est une sous-commande alors que rien
+  n'est tapé dans le mot (`go ` Entrée → `build`), ou juste après l'insertion d'une commande ou
   d'une sous-commande depuis la liste (`dock` Entrée → `docker-compose `, Entrée → `up`) ; sinon elle
   lance la commande. Tab insère toujours.
 - mintty (fenêtre « Git Bash » par défaut) ne fournit pas de console : l'intégration bash y lance
