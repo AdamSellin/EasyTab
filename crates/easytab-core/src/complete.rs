@@ -2012,7 +2012,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn asks_the_shell_for_commands_without_spec() {
-        let dir = temp_dir("shell");
+        let dir = temp_dir("shell-completer");
         std::fs::create_dir_all(dir.join("docs")).unwrap();
         let Some(shell) = crate::shell::fake_bash(
             &dir.join("bin"),
