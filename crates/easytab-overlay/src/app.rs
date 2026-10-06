@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 use tao::dpi::LogicalSize;
 use tao::event::{Event as WindowEvent, StartCause};
 use tao::event_loop::ControlFlow;
-use tao::window::{Window, WindowBuilder};
+use tao::window::{Icon, Window, WindowBuilder};
 use wry::{WebContext, WebViewBuilder};
 
 use crate::estimate::Hint;
@@ -24,6 +24,10 @@ use crate::protocol::{Event, Request, View};
 const WATCH: Duration = Duration::from_millis(150);
 /// Délai de la relecture qui suit chaque frappe.
 const SETTLE: Duration = Duration::from_millis(50);
+/// Logo d'EasyTab en 64×64, pixels RGBA bruts (`assets/easytab-64.rgba`,
+/// tiré de `docs/images/logo.png` par ImageMagick) : pas de décodeur d'image.
+const ICON_RGBA: &[u8] = include_bytes!("../../../assets/easytab-64.rgba");
+const ICON_SIZE: u32 = 64;
 
 pub enum UserEvent {
     Request(Request),
@@ -42,6 +46,16 @@ struct Popup {
 }
 
 pub fn run() -> anyhow::Result<()> {
+    // Avant tout fil : `set_var` n'est sûr que dans un programme à un seul fil.
+    let data_dir = dirs::data_local_dir().map(|dir| dir.join("EasyTab").join("webview"));
+    if let Some(dir) = &data_dir {
+        // WebView2 lit aussi cette variable : sans elle, une partie de ses
+        // données peut atterrir à côté du programme
+        // (`easytab-overlay.exe.WebView2` dans `~/.easytab/bin`).
+        std::env::set_var("WEBVIEW2_USER_DATA_FOLDER", dir);
+    }
+    remove_stray_webview_data();
+
     let event_loop = platform::event_loop::<UserEvent>()?;
 
     let proxy = event_loop.create_proxy();
@@ -86,13 +100,13 @@ pub fn run() -> anyhow::Result<()> {
         .with_visible(false)
         .with_focused(false)
         .with_resizable(false)
-        .with_inner_size(LogicalSize::new(320.0, 240.0));
+        .with_inner_size(LogicalSize::new(320.0, 240.0))
+        .with_window_icon(Icon::from_rgba(ICON_RGBA.to_vec(), ICON_SIZE, ICON_SIZE).ok());
     let window = platform::configure(builder).build(&event_loop)?;
     // Fenêtre jamais active, que les clics traversent.
     let surface = Surface::new(&window);
 
-    let mut context =
-        WebContext::new(dirs::data_local_dir().map(|dir| dir.join("EasyTab").join("webview")));
+    let mut context = WebContext::new(data_dir);
     let proxy = event_loop.create_proxy();
     let builder = WebViewBuilder::new_with_web_context(&mut context)
         .with_transparent(true)
@@ -303,5 +317,35 @@ fn send(event: Event) {
     if let Ok(line) = serde_json::to_string(&event) {
         let mut stdout = std::io::stdout().lock();
         let _ = writeln!(stdout, "{line}").and_then(|_| stdout.flush());
+    }
+}
+
+/// Efface le dossier `easytab-overlay.exe.WebView2` qu'une ancienne version a
+/// pu laisser à côté du programme installé. Les données de la page vivent
+/// dans le dossier local de l'utilisateur (`EasyTab/webview`).
+fn remove_stray_webview_data() {
+    let Ok(exe) = std::env::current_exe() else {
+        return;
+    };
+    // Seulement dans le dossier d'installation, pas dans celui de compilation.
+    let installed = exe
+        .parent()
+        .is_some_and(|dir| dir.ends_with(std::path::Path::new(".easytab").join("bin")));
+    if !installed {
+        return;
+    }
+    let mut stray = exe.into_os_string();
+    stray.push(".WebView2");
+    let _ = std::fs::remove_dir_all(stray);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn icone_valide() {
+        assert_eq!(ICON_RGBA.len(), (ICON_SIZE * ICON_SIZE * 4) as usize);
+        assert!(Icon::from_rgba(ICON_RGBA.to_vec(), ICON_SIZE, ICON_SIZE).is_ok());
     }
 }

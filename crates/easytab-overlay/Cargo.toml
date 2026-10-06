@@ -10,6 +10,10 @@ repository.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 
+# Icône de easytab-overlay.exe (voir assets/icone.rs).
+[build-dependencies]
+embed-resource.workspace = true
+
 # Partie commune : la fenêtre (tao) et la page qui dessine la liste (wry).
 [target.'cfg(any(windows, target_os = "macos", target_os = "linux"))'.dependencies]
 anyhow.workspace = true
