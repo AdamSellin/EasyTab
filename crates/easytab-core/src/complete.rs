@@ -168,7 +168,15 @@ impl Completer {
 
     /// Completer avec les specs embarquées, sans generators.
     pub fn builtin() -> Self {
-        let mut completer = Self::from_specs(spec::builtin());
+        Self::builtin_for(cfg!(windows))
+    }
+
+    /// Sous Windows, les specs de ses outils passent avant celles de Fig :
+    /// celles de `ping` et `where` y décrivent les versions Unix.
+    fn builtin_for(windows: bool) -> Self {
+        let mut specs = if windows { spec::windows() } else { Vec::new() };
+        specs.extend(spec::builtin());
+        let mut completer = Self::from_specs(specs);
         completer.installed = Some(OnceLock::new());
         completer.builtin_loadable = true;
         completer
@@ -282,6 +290,13 @@ impl Completer {
         });
     }
 
+    /// La commande a une spec de l'utilisateur (`~/.easytab/specs`).
+    fn is_custom(&self, name: &str) -> bool {
+        self.by_name
+            .get(name)
+            .is_some_and(|&i| i >= self.custom_from)
+    }
+
     fn find(&self, name: &str) -> Option<&Command> {
         // `/usr/bin/git` -> `git`
         let name = name.rsplit('/').next().unwrap_or(name);
@@ -316,15 +331,28 @@ impl Completer {
             return;
         };
         // Une spec de l'utilisateur ou embarquée, sinon PowerShell, sinon `--help`.
-        let Some(spec) = self
-            .find(&name.value)
-            .or_else(|| {
-                self.powershell
-                    .as_ref()
-                    .and_then(|powershell| powershell.spec(&name.value))
-            })
-            .or_else(|| self.help.as_ref().and_then(|help| help.spec(&name.value)))
-        else {
+        let alias = self
+            .powershell
+            .as_ref()
+            .filter(|_| !self.is_custom(&name.value))
+            .and_then(|powershell| Some((powershell, powershell.alias_target(&name.value)?)));
+        let spec = match alias {
+            // PowerShell résout un alias avant de chercher un programme : `ls`
+            // y est `Get-ChildItem`, pas le `ls` d'Unix. Un alias vers un
+            // programme (`g` → `git`) reçoit sa spec.
+            Some((powershell, target)) => {
+                self.find(&target).or_else(|| powershell.spec(&name.value))
+            }
+            None => self
+                .find(&name.value)
+                .or_else(|| {
+                    self.powershell
+                        .as_ref()
+                        .and_then(|powershell| powershell.spec(&name.value))
+                })
+                .or_else(|| self.help.as_ref().and_then(|help| help.spec(&name.value))),
+        };
+        let Some(spec) = spec else {
             return;
         };
         context.module = spec.module.clone();
@@ -411,6 +439,16 @@ impl Completer {
                 }
                 continue;
             }
+            // Option à la Windows (`/MIR`, `/LOG:fichier`) ; un mot en `/` qui
+            // n'en est pas une reste un chemin (Git Bash).
+            if !walk.options_done {
+                if let Some((opt, glued)) = find_slash_option(node, &walk.persistent, word) {
+                    if !glued {
+                        pending = opt.args.first().filter(|arg| !arg.optional);
+                    }
+                    continue;
+                }
+            }
             if !seen_positional {
                 if let Some(sub) = find_subcommand(node, word) {
                     context.path.extend(sub.names.first().cloned());
@@ -455,6 +493,25 @@ impl Completer {
             }
             return;
         }
+        if !walk.options_done && prefix.starts_with('/') && has_slash_options(node, persistent) {
+            // Valeur collée à l'option : `/LOG:jou` complète un fichier.
+            if let Some((opt, true)) = find_slash_option(node, persistent, prefix) {
+                let name = opt
+                    .names
+                    .iter()
+                    .find(|n| glued_value(n, prefix).is_some())
+                    .map_or(0, String::len);
+                if let Some(arg) = opt.args.first() {
+                    self.push_arg(arg, &prefix[name..], &prefix[..name], context, out);
+                }
+                return;
+            }
+            let before = out.len();
+            push_options(node, persistent, prefix, out);
+            if out.len() > before {
+                return;
+            }
+        }
         if !seen_positional {
             push_subcommands(node, prefix, out);
         }
@@ -496,6 +553,13 @@ impl Completer {
             .installed
             .as_ref()
             .map(|lock| lock.get_or_init(exec::installed_programs));
+        // Dans PowerShell, `ls` est l'alias de Get-ChildItem : il est proposé
+        // comme tel, pas avec la description du `ls` d'Unix.
+        let aliases = self
+            .powershell
+            .as_ref()
+            .map(PowerShell::aliases)
+            .unwrap_or_default();
         let mut found: Vec<Suggestion> = self
             .commands
             .iter()
@@ -505,7 +569,9 @@ impl Completer {
             // proposée.
             .filter(|(i, name, _)| self.by_name.get(name.as_str()) == Some(i))
             .filter(|(i, name, _)| {
-                *i >= self.custom_from || installed.is_none_or(|set| set.contains(name.as_str()))
+                *i >= self.custom_from
+                    || (installed.is_none_or(|set| set.contains(name.as_str()))
+                        && !aliases.contains(&name.to_lowercase()))
             })
             .filter_map(|(_, name, command)| {
                 Some(Suggestion {
@@ -521,18 +587,24 @@ impl Completer {
             })
             .collect();
         if let Some(powershell) = &self.powershell {
-            found.extend(powershell.commands().into_iter().filter_map(|name| {
-                Some(Suggestion {
-                    rank: rank::match_rank(&name, prefix)?,
-                    insert: name.clone(),
-                    label: name,
-                    description: None,
-                    kind: Kind::Command,
-                    hint: None,
-                    icon: None,
-                    append_space: true,
-                })
-            }));
+            found.extend(
+                powershell
+                    .commands()
+                    .into_iter()
+                    .filter_map(|(name, target)| {
+                        Some(Suggestion {
+                            rank: rank::match_rank(&name, prefix)?,
+                            insert: name.clone(),
+                            label: name,
+                            // Un alias : la commande qu'il désigne.
+                            description: target,
+                            kind: Kind::Command,
+                            hint: None,
+                            icon: None,
+                            append_space: true,
+                        })
+                    }),
+            );
         }
         sort(&mut found);
         found.dedup_by(|a, b| a.label == b.label);
@@ -628,6 +700,46 @@ fn find_option<'a>(node: &'a Command, persistent: &[&'a Opt], flag: &str) -> Opt
         })
 }
 
+fn has_slash_options(node: &Command, persistent: &[&Opt]) -> bool {
+    node.options
+        .iter()
+        .chain(persistent.iter().copied())
+        .any(|o| o.names.iter().any(|n| n.starts_with('/')))
+}
+
+/// Option à la Windows désignée par `word`, sans tenir compte de la casse
+/// (`/mir` vaut `/MIR`), et si sa valeur y est collée (`/LOG:fichier`,
+/// `/scanfile=fichier` : l'option est nommée `/LOG:`, `/scanfile=`).
+fn find_slash_option<'a>(
+    node: &'a Command,
+    persistent: &[&'a Opt],
+    word: &str,
+) -> Option<(&'a Opt, bool)> {
+    if !word.starts_with('/') {
+        return None;
+    }
+    let options = || node.options.iter().chain(persistent.iter().copied());
+    let names = |o: &'a Opt| o.names.iter().filter(|n| n.starts_with('/'));
+    options()
+        .find_map(|o| {
+            names(o)
+                .find(|n| n.eq_ignore_ascii_case(word))
+                .map(|n| (o, n.ends_with([':', '='])))
+        })
+        .or_else(|| {
+            options().find_map(|o| names(o).find_map(|n| glued_value(n, word).map(|_| (o, true))))
+        })
+}
+
+/// Valeur collée à l'option `name` (`/LOG:`) dans `word` (`/log:a.txt` → `a.txt`).
+fn glued_value<'w>(name: &str, word: &'w str) -> Option<&'w str> {
+    if !name.ends_with([':', '=']) {
+        return None;
+    }
+    let head = word.get(..name.len())?;
+    head.eq_ignore_ascii_case(name).then(|| &word[name.len()..])
+}
+
 fn push_subcommands(node: &Command, prefix: &str, out: &mut Vec<Suggestion>) {
     let mut found: Vec<Suggestion> = node
         .subcommands
@@ -684,6 +796,8 @@ fn push_options(node: &Command, persistent: &[&Opt], prefix: &str, out: &mut Vec
                 None if takes_equals => format!("{name}="),
                 None => name.clone(),
             };
+            // `/LOG:` : la valeur se colle à l'option.
+            let append_space = !takes_equals && !insert.ends_with([':', '=']);
             Some(Suggestion {
                 rank,
                 label: o.names.join(", "),
@@ -692,7 +806,7 @@ fn push_options(node: &Command, persistent: &[&Opt], prefix: &str, out: &mut Vec
                 hint: args_hint(&o.args),
                 icon: None,
                 kind: Kind::Option,
-                append_space: !takes_equals,
+                append_space,
             })
         })
         .collect();
@@ -887,6 +1001,186 @@ mod tests {
         };
         assert!(!labels("symfon").contains(&"symfony".to_string()));
         assert!(labels("gi").contains(&"git".to_string()));
+    }
+
+    /// Completer avec les specs de Windows, où seuls `installed` sont dans le PATH.
+    fn windows_completer(installed: &[&str]) -> Completer {
+        let mut completer = Completer::builtin_for(true);
+        completer.installed = Some(OnceLock::from(
+            installed
+                .iter()
+                .map(|s| s.to_string())
+                .collect::<HashSet<_>>(),
+        ));
+        completer
+    }
+
+    fn suggestions(completer: &Completer, input: &str) -> Vec<Suggestion> {
+        completer
+            .complete(input, &PathBuf::from("/nonexistent"))
+            .suggestions
+    }
+
+    #[test]
+    fn embeds_windows_specs() {
+        let specs = spec::windows();
+        let names: Vec<&str> = specs.iter().map(|s| s.names[0].as_str()).collect();
+        for tool in [
+            "winget",
+            "wsl",
+            "choco",
+            "scoop",
+            "ipconfig",
+            "netsh",
+            "robocopy",
+            "taskkill",
+            "tasklist",
+            "sc",
+            "dism",
+            "sfc",
+            "where",
+            "findstr",
+            "xcopy",
+            "icacls",
+            "schtasks",
+            "shutdown",
+            "systeminfo",
+            "nslookup",
+            "ping",
+            "tracert",
+            "net",
+        ] {
+            assert!(names.contains(&tool), "{tool} manque : {names:?}");
+        }
+        // Lues en entier, sans erreur, avec une description pour chaque commande.
+        for spec in &specs {
+            assert!(spec.description.is_some(), "{:?}", spec.names);
+            let command = spec.command();
+            assert!(
+                !command.options.is_empty() || !command.subcommands.is_empty(),
+                "{:?}",
+                spec.names
+            );
+        }
+    }
+
+    #[test]
+    fn windows_specs_only_on_windows_and_when_installed() {
+        let windows = windows_completer(&["ping", "robocopy"]);
+        let ping = suggestions(&windows, "pin");
+        let ping = ping.iter().find(|s| s.label == "ping").unwrap();
+        assert_eq!(
+            ping.description.as_deref(),
+            Some("Send ICMP echo requests to network hosts")
+        );
+        assert!(labels_of(&windows, "ping -").contains(&"-n".to_string()));
+        assert!(labels_of(&windows, "rob").contains(&"robocopy".to_string()));
+        // `winget` n'est pas installé : pas proposé.
+        assert!(!labels_of(&windows, "wing").contains(&"winget".to_string()));
+
+        // Ailleurs, `ping` garde la spec Fig, et `robocopy` n'existe pas.
+        let mut unix = Completer::builtin_for(false);
+        unix.installed = Some(OnceLock::from(HashSet::from([
+            "ping".to_string(),
+            "robocopy".to_string(),
+        ])));
+        let ping = suggestions(&unix, "pin");
+        let ping = ping.iter().find(|s| s.label == "ping").unwrap();
+        assert_ne!(
+            ping.description.as_deref(),
+            Some("Send ICMP echo requests to network hosts")
+        );
+        assert!(!labels_of(&unix, "rob").contains(&"robocopy".to_string()));
+    }
+
+    #[test]
+    fn completes_windows_subcommands_and_options() {
+        let completer = windows_completer(&[]);
+        assert!(labels_of(&completer, "winget ins").contains(&"install".to_string()));
+        assert!(labels_of(&completer, "winget install --sc").contains(&"--scope".to_string()));
+        assert_eq!(
+            labels_of(&completer, "winget install --scope "),
+            ["machine", "user"]
+        );
+        assert!(labels_of(&completer, "netsh wlan show pro").contains(&"profiles".to_string()));
+        assert!(labels_of(&completer, "sc qu").contains(&"query".to_string()));
+        assert!(labels_of(&completer, "wsl --ins").contains(&"--install".to_string()));
+    }
+
+    #[test]
+    fn completes_slash_options() {
+        let completer = windows_completer(&[]);
+        let found = suggestions(&completer, "robocopy src dst /MI");
+        let mir = found.iter().find(|s| s.label == "/MIR").expect("/MIR");
+        assert!(mir.append_space);
+        // Sans tenir compte de la casse, et après d'autres options.
+        assert!(labels_of(&completer, "robocopy src dst /mir /pu").contains(&"/PURGE".to_string()));
+        // La valeur d'une option se colle après `:` : pas d'espace.
+        let found = suggestions(&completer, "robocopy src dst /LO");
+        let log = found.iter().find(|s| s.label == "/LOG:").expect("/LOG:");
+        assert_eq!(log.insert, "/LOG:");
+        assert!(!log.append_space);
+        // Valeur collée : seule la fin du mot est complétée, la casse tapée gardée.
+        let found = suggestions(&completer, "dism /online /enable-feature /featurename:Virt");
+        assert_eq!(found[0].label, "VirtualMachinePlatform");
+        assert_eq!(found[0].insert, "/featurename:VirtualMachinePlatform");
+        let found = suggestions(&completer, "robocopy a b /COPY:DATS");
+        assert_eq!(found[0].label, "DATS");
+        // Valeur dans le mot suivant.
+        assert_eq!(
+            labels_of(&completer, "tasklist /fo "),
+            ["CSV", "LIST", "TABLE"]
+        );
+        // `/scanfile=` : la valeur suit le `=`.
+        let found = suggestions(&completer, "sfc /scan");
+        let scanfile = found.iter().find(|s| s.label == "/scanfile=").unwrap();
+        assert!(!scanfile.append_space);
+        // Une commande sans option en `/` laisse les chemins tranquilles.
+        assert!(labels_of(&completer, "winget /").is_empty());
+    }
+
+    #[test]
+    fn powershell_aliases_get_their_command_parameters() {
+        let powershell = PowerShell::answered(
+            r#"[{"n":"Get-ChildItem","t":"Cmdlet","r":null},
+                {"n":"ls","t":"Alias","r":"Get-ChildItem"},
+                {"n":"gci","t":"Alias","r":"Get-ChildItem"},
+                {"n":"g","t":"Alias","r":"git"},
+                {"n":"%","t":"Alias","r":"ForEach-Object"}]"#,
+            &[(
+                "Get-ChildItem",
+                r#"[{"n":"Path","a":[],"s":false,"t":"String[]","v":[]},
+                    {"n":"Recurse","a":["s"],"s":true,"t":"SwitchParameter","v":[]}]"#,
+            )],
+        );
+        let completer = Completer::new(vec![
+            serde_json::from_str(
+                r#"{"names": ["ls"], "description": "List directory contents",
+                    "options": [{"names": ["-l"]}]}"#,
+            )
+            .unwrap(),
+            serde_json::from_str(r#"{"names": ["git"], "subcommands": [{"names": ["checkout"]}]}"#)
+                .unwrap(),
+        ])
+        .with_powershell(powershell);
+
+        // `ls` est Get-ChildItem, pas le `ls` d'Unix.
+        let found = labels_of(&completer, "ls -");
+        assert!(found.contains(&"-Recurse, -s".to_string()), "{found:?}");
+        assert!(!found.contains(&"-l".to_string()), "{found:?}");
+        assert!(labels_of(&completer, "gci -Pa").contains(&"-Path".to_string()));
+        // Un alias vers un programme reçoit la spec de celui-ci.
+        assert!(labels_of(&completer, "g che").contains(&"checkout".to_string()));
+
+        // Dans la liste des commandes, avec la commande désignée.
+        let found = suggestions(&completer, "l");
+        let ls: Vec<_> = found.iter().filter(|s| s.label == "ls").collect();
+        assert_eq!(ls.len(), 1, "{found:?}");
+        assert_eq!(ls[0].description.as_deref(), Some("Get-ChildItem"));
+        let found = suggestions(&completer, "gc");
+        let gci = found.iter().find(|s| s.label == "gci").unwrap();
+        assert_eq!(gci.description.as_deref(), Some("Get-ChildItem"));
+        assert!(labels_of(&completer, "%").is_empty());
     }
 
     #[test]

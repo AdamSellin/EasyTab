@@ -19,6 +19,12 @@ voir `LICENSE-fig`) et embarqués, compressés (zlib), dans les binaires d'EasyT
   EasyTab l'exécute dans son moteur JS embarqué. Les specs produites par `generateSpec` sont
   converties par le même code que l'import (`crates/easytab-core/src/fig-convert.js`).
 
+S'y ajoute `windows.json`, écrit à la main (JSON lisible, non compressé, au même format) : les
+outils de Windows absents des specs Fig (winget, robocopy, taskkill, netsh…), d'après leur aide
+(`robocopy /?`, `winget install --help`…). Il n'est utilisé que sous Windows, où ses specs passent
+avant celles de Fig de même nom (`ping`, `where`). Une option nommée `/LOG:` ou `/scanfile=`
+prend sa valeur collée.
+
 Seules les commandes installées (présentes dans le PATH) sont proposées comme commandes.
 
 ## Régénérer
