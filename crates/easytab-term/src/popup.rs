@@ -302,6 +302,9 @@ pub struct Popup {
     next: Option<String>,
     /// Workflow en cours de remplissage.
     fill: Option<Fill>,
+    /// Ligne attendue juste après une insertion depuis la liste : tant
+    /// qu'elle n'a pas changé, Entrée choisit aussi la sous-commande.
+    inserted: Option<String>,
     /// Ligne de l'écran où la suggestion en gris est dessinée.
     inline_drawn: Option<u16>,
     /// Réglages de `~/.easytab/config.toml`.
@@ -468,8 +471,15 @@ impl Popup {
             return false;
         };
         let typed = completion.replace.as_str();
+        // Juste après avoir choisi la commande dans la liste (`dock` →
+        // `docker-compose `), Entrée choisit la sous-commande : la commande
+        // seule ne ferait qu'afficher son aide.
+        let just_inserted = typed.is_empty() && self.inserted == self.last_input;
         completion.suggestions.get(self.selected).is_some_and(|s| {
-            !typed.is_empty() && s.insert.len() > typed.len() && s.insert.starts_with(typed)
+            (just_inserted && s.kind == Kind::Subcommand)
+                || (!typed.is_empty()
+                    && s.insert.len() > typed.len()
+                    && s.insert.starts_with(typed))
         })
     }
 
@@ -572,12 +582,14 @@ impl Popup {
         // La ligne change : la prochaine mise à jour recalculera la liste.
         let input = self.last_input.take().unwrap_or_default();
         self.search = false;
+        let line = input
+            .strip_suffix(completion.replace.as_str())
+            .unwrap_or(&input);
+        let line = format!("{line}{insert}");
         if suggestion.kind == Kind::Workflow {
-            let line = input
-                .strip_suffix(completion.replace.as_str())
-                .unwrap_or(&input);
-            self.fill = Fill::start(&format!("{line}{insert}"), &suggestion.label);
+            self.fill = Fill::start(&line, &suggestion.label);
         }
+        self.inserted = Some(line);
         Some(match insert.strip_prefix(&completion.replace) {
             Some(rest) => rest.as_bytes().to_vec(),
             None => {
@@ -1078,6 +1090,31 @@ mod tests {
         assert!(!popup.handles(Key::Enter));
         popup.select(1);
         assert!(popup.handles(Key::Enter));
+
+        // Juste après avoir choisi `git` dans la liste, Entrée choisit la
+        // sous-commande au lieu de lancer `git` seul.
+        let completer = Completer::builtin();
+        let mut popup = Popup::default();
+        popup.update(&session_with(b"gi"), &completer, Path::new("/"));
+        let git = popup
+            .completion
+            .as_ref()
+            .unwrap()
+            .suggestions
+            .iter()
+            .position(|s| s.label == "git")
+            .unwrap();
+        popup.selected = git;
+        assert_eq!(popup.accept().as_deref(), Some(&b"t "[..]));
+        let session = session_with(b"git ");
+        popup.update(&session, &completer, Path::new("/"));
+        popup.draw(session.screen(), &mut out);
+        assert!(popup.handles(Key::Enter));
+        // Après une valeur ou une option, Entrée lance toujours la commande.
+        assert_eq!(popup.accept().as_deref().map(|b| b.is_empty()), Some(false));
+        let session = session_with(b"git add ");
+        popup.update(&session, &completer, Path::new("/"));
+        assert!(!popup.handles(Key::Enter));
     }
 
     #[test]

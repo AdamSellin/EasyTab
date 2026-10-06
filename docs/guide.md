@@ -18,7 +18,7 @@ suggestions, les specs personnelles, l'installation depuis les sources.
 |---|---|
 | ↑ / ↓, Maj+Tab | Choisir une suggestion (Maj+Tab remonte) |
 | Tab | Insérer la suggestion choisie |
-| Entrée | Insérer la suggestion surlignée quand elle complète le mot tapé, ou après ↑ / ↓ ; sinon la commande part comme d'habitude |
+| Entrée | Insérer la suggestion surlignée quand elle complète le mot tapé, après ↑ / ↓, ou quand c'est une sous-commande juste après une insertion depuis la liste (`dock` Entrée → `docker-compose `, Entrée → `up`) ; sinon la commande part comme d'habitude |
 | Échap | Fermer la liste jusqu'à la prochaine frappe |
 | Ctrl+Espace | Rouvrir la liste fermée avec Échap |
 | → | Accepter la suggestion en gris |
