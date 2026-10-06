@@ -7,6 +7,7 @@ suggestions, les specs personnelles, l'installation depuis les sources.
 - [Réglages](#réglages)
 - [D'où viennent les suggestions](#doù-viennent-les-suggestions)
 - [Specs personnelles](#specs-personnelles)
+- [Workflows](#workflows)
 - [Installer](#installer)
 - [Compiler depuis les sources](#compiler-depuis-les-sources)
 - [Organisation du code](#organisation-du-code)
@@ -21,12 +22,29 @@ suggestions, les specs personnelles, l'installation depuis les sources.
 | Échap | Fermer la liste jusqu'à la prochaine frappe |
 | Ctrl+Espace | Rouvrir la liste fermée avec Échap |
 | → | Accepter la suggestion en gris |
+| Ctrl+R | Chercher dans tout l'historique (Ctrl+R de nouveau : revenir à la liste habituelle) |
 
 La suggestion en gris, après le curseur, est la commande la plus récente de l'historique qui
 prolonge la ligne. Elle s'affiche dans le terminal, même avec la fenêtre flottante, et seulement
 quand le curseur est en fin de ligne ; → l'accepte, sinon → déplace le curseur comme d'habitude.
 Si le shell affiche déjà sa propre suggestion (prédictions de PowerShell), EasyTab n'ajoute pas
 la sienne.
+
+**Recherche (Ctrl+R).** La ligne tapée devient une recherche dans tout l'historique : les
+commandes qui contiennent chacun de ses mots, dans n'importe quel ordre et sans tenir compte de la
+casse, les plus récentes d'abord (`dock up` trouve `docker compose up -d`). La description donne le
+dossier où la commande a été lancée, son échec éventuel, sa durée et sa date. Tab ou Entrée
+remplace la ligne par la commande choisie, sans la lancer ; Échap ou Ctrl+R sort de la recherche.
+Les workflows qui correspondent passent devant. `search = false` dans `[keys]` laisse Ctrl+R au
+shell.
+
+**Correction.** Quand une commande échoue sur une faute de frappe, la commande corrigée s'affiche
+en gris au prompt suivant, et → l'accepte : `gti status` → `git status` (commande introuvable,
+code 127 en bash et zsh, tout échec dans PowerShell), `git stauts` → `git status` (sous-commande
+inconnue d'une spec). Une faute, c'est une lettre en trop, en moins, changée, ou deux lettres
+inversées (deux fautes au plus pour un mot de plus de quatre lettres) ; à égalité, le nom le plus
+utilisé gagne. Rien n'est proposé pour une ligne avec `|`, `;`, `&` ou `$`. `correct = false`
+dans `[list]` le désactive.
 
 Quand la liste est fermée, Tab, Maj+Tab et Ctrl+Espace gardent leur comportement habituel
 (complétion du shell), sauf Ctrl+Espace juste après Échap.
@@ -65,9 +83,11 @@ history = true      # proposer les commandes déjà tapées
 inline = true       # suggestion en gris après le curseur, acceptée avec →
 shell = true        # commandes sans spec : complétions de bash-completion ou fish
 help = true         # commandes sans spec : options lues dans « commande --help »
+correct = true      # après une faute de frappe, commande corrigée en gris au prompt suivant
 
 [keys]
 enter_inserts = true  # false : Entrée lance toujours la commande, seul Tab insère
+search = true         # Ctrl+R cherche dans l'historique ; false : Ctrl+R reste au shell
 ```
 
 Les variables `EASYTAB_OVERLAY` et `EASYTAB_ICONS` passent avant le fichier.
@@ -95,6 +115,9 @@ valeur collée (`/LOG:journal.txt`, `/FeatureName:…`).
 **Historique.** Les commandes déjà tapées qui prolongent la ligne en cours passent
 en tête (`docker-compose u` → `docker-compose up -d --build`, icône d'horloge), tirées de
 l'historique du shell (`~/.bash_history`, `~/.zsh_history`, historique PSReadLine de PowerShell).
+EasyTab retient en plus, dans `~/.easytab/history.jsonl`, le dossier, le code de sortie et la
+durée de chaque commande lancée sous lui : celles lancées dans le dossier courant passent devant,
+celles dont la dernière exécution a échoué derrière. `history = false` désactive les deux.
 
 **Variables d'environnement.** `$HO` propose `$HOME`, `$HOSTNAME`… avec leur valeur ; `${HO`
 donne `${HOME}`. Sous PowerShell, c'est `$env:PA` → `$env:PATH`. Ce sont les variables connues à
@@ -187,6 +210,29 @@ Un fichier contient une spec, ou un tableau de specs.
   ]
 }
 ```
+
+## Workflows
+
+Des commandes enregistrées avec des champs à remplir, écrits entre accolades, dans
+`~/.easytab/workflows.toml` (`easytab workflows` le crée avec des exemples) :
+
+```toml
+[[workflow]]
+name = "Shell dans un conteneur"
+command = "docker exec -it {conteneur} bash"
+
+[[workflow]]
+name = "Branche à partir de main"
+command = "git switch -c {branche} main"
+description = "Nouvelle branche, partie de main"   # facultatif
+```
+
+Un workflow est proposé dans la liste (icône ▸) dès qu'on tape le début de sa commande
+(`docker ex`), et dans la recherche Ctrl+R par son nom ou sa commande. Le choisir écrit la
+commande jusqu'au premier champ ; la suite s'affiche en gris (`{conteneur} bash`). On tape la
+valeur du champ, avec l'aide de la liste habituelle (ici les conteneurs de docker), puis → ajoute
+la suite jusqu'au champ suivant. `${HOME}` et `{a,b}` restent du texte pour le shell. Le fichier
+est lu à l'ouverture du terminal ; `easytab doctor` y signale une erreur.
 
 ## Installer
 

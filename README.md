@@ -29,7 +29,10 @@ branches, npm scripts, files… with their description. Pick one, press Tab, it'
   specs: git, docker, npm, kubectl, composer, symfony…
 - **Your project's values**: branches, `package.json` scripts, `Makefile` targets, SSH hosts,
   docker containers.
-- **Your history** at the top of the list, and the suggestions you pick most often.
+- **Your history** at the top of the list (commands run in the current folder first), the
+  suggestions you pick most often, and Ctrl+R to search all of it.
+- **Typo fixes**: after `gti status` fails, `git status` waits in grey at the next prompt.
+- **Workflows**: saved commands with fields to fill in, like `docker exec -it {container} bash`.
 - **Your shell**: aliases (`g push` completes like `git push`), environment variables (`$HOME`),
   and the completions of bash-completion or fish for commands without a spec.
 - **Nothing to learn**: your terminal and shell stay yours, the list never grabs the keyboard.
@@ -65,11 +68,13 @@ Then open a new terminal. To update: `easytab update`.
 | Enter | Write it if it completes the typed word, otherwise run the command |
 | Esc | Close the list |
 | Ctrl+Space | Open it again after Esc |
-| → | Accept the grey suggestion from your history |
+| → | Accept the grey suggestion (history, typo fix, rest of a workflow) |
+| Ctrl+R | Search the whole history |
 
 | Command | |
 |---|---|
 | `easytab config` | Opens the settings (`~/.easytab/config.toml`) |
+| `easytab workflows` | Opens your workflows (`~/.easytab/workflows.toml`) |
 | `easytab doctor` | Checks the installation |
 | `easytab update` | Installs the latest version |
 | `easytab uninstall` | Removes EasyTab from the shell |

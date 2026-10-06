@@ -30,6 +30,7 @@ mod rank;
 mod session;
 pub mod shell;
 pub mod spec;
+pub mod workflow;
 
 pub use complete::{Completer, Completion, Kind, Suggestion};
 pub use config::Config;
@@ -41,3 +42,4 @@ pub use pwsh::PowerShell;
 pub use rank::Usage;
 pub use session::{Phase, Session};
 pub use shell::ShellCompletions;
+pub use workflow::Workflow;
