@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use crate::osc::{Marker, OscScanner};
@@ -22,6 +23,10 @@ pub struct Session {
     phase: Phase,
     last_exit_code: Option<i32>,
     cwd: Option<PathBuf>,
+    /// Alias en cours de réception (entre `OSC 6973;aliases` et le prompt).
+    receiving_aliases: Option<HashMap<String, String>>,
+    /// Liste complète des alias, pas encore relevée par [`Session::take_aliases`].
+    aliases: Option<HashMap<String, String>>,
 }
 
 impl Session {
@@ -35,7 +40,15 @@ impl Session {
             phase: Phase::Unknown,
             last_exit_code: None,
             cwd: None,
+            receiving_aliases: None,
+            aliases: None,
         }
+    }
+
+    /// Nouvelle liste d'alias envoyée par le shell, s'il en a envoyé une depuis
+    /// le dernier appel.
+    pub fn take_aliases(&mut self) -> Option<HashMap<String, String>> {
+        self.aliases.take()
     }
 
     pub fn phase(&self) -> Phase {
@@ -114,7 +127,23 @@ impl Session {
                 self.cwd = Some(path);
                 return;
             }
-            Marker::PromptStart => Phase::Prompt,
+            Marker::AliasesStart => {
+                self.receiving_aliases = Some(HashMap::new());
+                return;
+            }
+            Marker::Alias { name, value } => {
+                if let Some(aliases) = &mut self.receiving_aliases {
+                    aliases.insert(name, value);
+                }
+                return;
+            }
+            Marker::PromptStart => {
+                // La liste d'alias est envoyée juste avant le prompt.
+                if let Some(aliases) = self.receiving_aliases.take() {
+                    self.aliases = Some(aliases);
+                }
+                Phase::Prompt
+            }
             Marker::InputStart => {
                 let (row, col) = self.parser.screen().cursor_position();
                 Phase::Input { row, col }
@@ -152,6 +181,17 @@ mod tests {
 
         session.feed_output(b"git ch");
         assert_eq!(session.current_input().as_deref(), Some("git ch"));
+    }
+
+    #[test]
+    fn collects_aliases_sent_before_the_prompt() {
+        let mut session = Session::new(24, 80);
+        session.feed_output(b"\x1b]6973;aliases\x07\x1b]6973;alias;g=git\x07");
+        assert_eq!(session.take_aliases(), None);
+        session.feed_output(PROMPT);
+        let aliases = session.take_aliases().unwrap();
+        assert_eq!(aliases.get("g").map(String::as_str), Some("git"));
+        assert_eq!(session.take_aliases(), None);
     }
 
     #[test]

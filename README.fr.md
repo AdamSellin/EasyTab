@@ -30,6 +30,8 @@ options, branches git, scripts npm, fichiers… avec leur description. Tu choisi
 - **Les valeurs de ton projet** : branches, scripts de `package.json`, cibles du `Makefile`,
   hôtes SSH, conteneurs docker.
 - **Ton historique** en tête de liste, et les suggestions que tu choisis le plus souvent.
+- **Ton shell** : les alias (`g push` se complète comme `git push`) et les variables
+  d'environnement (`$HOME`).
 - **Rien à apprendre** : le terminal et le shell restent les tiens, la liste ne prend jamais le
   clavier.
 
@@ -59,10 +61,11 @@ Ouvre ensuite un nouveau terminal. Pour mettre à jour : `easytab update`.
 
 | Touche | Action |
 |---|---|
-| ↑ ↓ | Choisir une suggestion |
+| ↑ ↓, Maj+Tab | Choisir une suggestion |
 | Tab | L'écrire |
 | Entrée | L'écrire si elle complète le mot tapé, sinon lancer la commande |
 | Échap | Fermer la liste |
+| Ctrl+Espace | La rouvrir après Échap |
 
 | Commande | |
 |---|---|

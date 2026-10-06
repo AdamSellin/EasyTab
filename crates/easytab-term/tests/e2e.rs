@@ -422,7 +422,14 @@ fn start_bash(name: &str, prepare: impl FnOnce(&Path)) -> Option<Terminal> {
     let home = temp_home(name);
     prepare(&home);
     let rc = home.join("easytabrc");
-    std::fs::write(&rc, format!("PS1='$ '\n{}", integration("easytab.bash"))).unwrap();
+    std::fs::write(
+        &rc,
+        format!(
+            "PS1='$ '\n[ -f ~/.bash_aliases ] && . ~/.bash_aliases\n{}",
+            integration("easytab.bash")
+        ),
+    )
+    .unwrap();
     let args = [
         "--noprofile".to_string(),
         "--rcfile".to_string(),
@@ -439,4 +446,41 @@ fn bash_suggests_and_inserts() {
     if let Some(mut term) = start_bash("bash", |_| {}) {
         completes_git_checkout(&mut term);
     }
+}
+
+/// Un alias du shell se complète comme sa commande ; Échap ferme la liste,
+/// Ctrl+Espace la rouvre, Maj+Tab remonte d'une ligne. `$HOM` propose `$HOME`.
+#[test]
+fn bash_follows_aliases_and_variables() {
+    let Some(mut term) = start_bash("bash-alias", |home| {
+        std::fs::write(home.join(".bash_aliases"), "alias g=git\n").unwrap();
+    }) else {
+        return;
+    };
+    term.send(b"g checko");
+    term.wait_for("la liste de git par l'alias", |t| {
+        t.screen().contains("Switch branches") && t.cursor_line() == "$ g checko"
+    });
+    term.send(b"\x1b");
+    term.wait_for("la liste fermée", |t| !t.screen().contains('╭'));
+    term.send(b"\0");
+    term.wait_for("la liste rouverte", |t| {
+        t.screen().contains("Switch branches")
+    });
+    // Maj+Tab depuis la première ligne passe à la dernière, puis ↓ revient.
+    term.send(b"\x1b[Z");
+    term.pump(Duration::from_millis(200));
+    term.send(b"\x1b[B");
+    term.pump(Duration::from_millis(200));
+    term.send(b"\t");
+    term.wait_for("la ligne g checkout", |t| t.cursor_line() == "$ g checkout");
+
+    term.send(b"\x15echo $HOM");
+    term.wait_for("la variable $HOME", |t| {
+        t.screen().contains("$HOME") && t.cursor_line() == "$ echo $HOM"
+    });
+    term.send(b"\t");
+    term.wait_for("la ligne complétée", |t| {
+        t.cursor_line() == "$ echo $HOME"
+    });
 }

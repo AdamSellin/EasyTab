@@ -15,12 +15,14 @@ suggestions, les specs personnelles, l'installation depuis les sources.
 
 | Touche | Action |
 |---|---|
-| ↑ / ↓ | Choisir une suggestion |
+| ↑ / ↓, Maj+Tab | Choisir une suggestion (Maj+Tab remonte) |
 | Tab | Insérer la suggestion choisie |
 | Entrée | Insérer la suggestion surlignée quand elle complète le mot tapé, ou après ↑ / ↓ ; sinon la commande part comme d'habitude |
 | Échap | Fermer la liste jusqu'à la prochaine frappe |
+| Ctrl+Espace | Rouvrir la liste fermée avec Échap |
 
-Quand la liste est fermée, Tab garde son comportement habituel (complétion du shell).
+Quand la liste est fermée, Tab, Maj+Tab et Ctrl+Espace gardent leur comportement habituel
+(complétion du shell), sauf Ctrl+Espace juste après Échap.
 
 La liste s'affiche dans une fenêtre flottante (`easytab-overlay`), placée sous le
 curseur du terminal : coins arrondis, ombre, icônes par type (branche git, script npm, dossier,
@@ -84,6 +86,15 @@ valeur collée (`/LOG:journal.txt`, `/FeatureName:…`).
 **Historique.** Les commandes déjà tapées qui prolongent la ligne en cours passent
 en tête (`docker-compose u` → `docker-compose up -d --build`, icône d'horloge), tirées de
 l'historique du shell (`~/.bash_history`, `~/.zsh_history`, historique PSReadLine de PowerShell).
+
+**Variables d'environnement.** `$HO` propose `$HOME`, `$HOSTNAME`… avec leur valeur ; `${HO`
+donne `${HOME}`. Sous PowerShell, c'est `$env:PA` → `$env:PATH`. Ce sont les variables connues à
+l'ouverture du terminal : une variable exportée plus tard dans la session n'y est pas.
+
+**Alias.** Sous bash et zsh, l'intégration envoie les alias du shell à EasyTab au premier prompt,
+puis quand ils changent (séquence `OSC 6973`, ignorée par les terminaux). Avec `alias g=git`,
+`g pu` se complète comme `git pu`, et les alias sont proposés comme commandes, avec leur valeur
+en description. Les alias de PowerShell viennent de `Get-Command`.
 
 **Classement.** Les suggestions sont classées par qualité de correspondance (début du nom, puis
 recherche floue : `git chk` trouve `checkout`), puis par fréquence d'utilisation, retenue dans
