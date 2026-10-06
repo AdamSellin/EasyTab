@@ -599,7 +599,7 @@ checksum = "92773504d58c093f6de2459af4af33faa518c13451eb8f2b5698ed3d36e7c813"
 
 [[package]]
 name = "easytab-cli"
-version = "0.1.2"
+version = "0.1.6"
 dependencies = [
  "anyhow",
  "clap",
@@ -613,7 +613,7 @@ dependencies = [
 
 [[package]]
 name = "easytab-core"
-version = "0.1.2"
+version = "0.1.6"
 dependencies = [
  "miniz_oxide",
  "rquickjs",
@@ -626,7 +626,7 @@ dependencies = [
 
 [[package]]
 name = "easytab-overlay"
-version = "0.1.2"
+version = "0.1.6"
 dependencies = [
  "anyhow",
  "dirs",
@@ -648,7 +648,7 @@ dependencies = [
 
 [[package]]
 name = "easytab-term"
-version = "0.1.2"
+version = "0.1.6"
 dependencies = [
  "anyhow",
  "clap",
