@@ -480,6 +480,9 @@ impl Popup {
         let just_inserted = typed.is_empty() && self.inserted == self.last_input;
         completion.suggestions.get(self.selected).is_some_and(|s| {
             just_inserted
+                // `go ` tapé à la main : la commande seule ne ferait
+                // qu'afficher son aide, Entrée choisit la sous-commande.
+                || (typed.is_empty() && s.kind == Kind::Subcommand)
                 || (!typed.is_empty()
                     && s.insert.len() > typed.len()
                     && s.insert.starts_with(typed))
@@ -1085,8 +1088,14 @@ mod tests {
         popup.select(1);
         assert!(popup.handles(Key::Enter));
 
-        // Rien de tapé dans le mot : Entrée lance la commande, sauf après ↓.
+        // Rien de tapé dans le mot : Entrée choisit la sous-commande…
         let session = session_with(b"git ");
+        let mut popup = popup_for(&session);
+        popup.draw(session.screen(), &mut out);
+        assert!(popup.is_shown());
+        assert!(popup.handles(Key::Enter));
+        // … mais lance la commande après un argument, sauf après ↓.
+        let session = session_with(b"git add ");
         let mut popup = popup_for(&session);
         popup.draw(session.screen(), &mut out);
         assert!(popup.is_shown());
