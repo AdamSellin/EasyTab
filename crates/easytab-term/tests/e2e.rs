@@ -115,12 +115,13 @@ impl Terminal {
         self.parser.screen().contents()
     }
 
-    /// La ligne où se trouve le curseur.
+    /// La ligne où se trouve le curseur, jusqu'au curseur : la suggestion en
+    /// gris, après lui, n'en fait pas partie.
     fn cursor_line(&self) -> String {
-        let (row, _) = self.parser.screen().cursor_position();
+        let (row, col) = self.parser.screen().cursor_position();
         self.parser
             .screen()
-            .rows(0, COLS)
+            .rows(0, col)
             .nth(row as usize)
             .unwrap_or_default()
             .trim_end()
@@ -541,5 +542,31 @@ fn bash_follows_aliases_and_variables() {
     term.send(b"\t");
     term.wait_for("la ligne complétée", |t| {
         t.cursor_line() == "$ echo $HOME"
+    });
+}
+
+/// La commande la plus récente de l'historique qui prolonge la ligne
+/// s'affiche en gris après le curseur ; → l'accepte.
+#[test]
+fn right_arrow_accepts_the_inline_suggestion() {
+    let Some(mut term) = start_bash("bash-inline", |home| {
+        std::fs::write(home.join(".bash_history"), "echo easytab-inline-test\n").unwrap();
+    }) else {
+        return;
+    };
+    term.send(b"echo eas");
+    term.wait_for("la suggestion en gris", |t| {
+        let (row, _) = t.parser.screen().cursor_position();
+        let line = t
+            .parser
+            .screen()
+            .rows(0, COLS)
+            .nth(row as usize)
+            .unwrap_or_default();
+        t.cursor_line() == "$ echo eas" && line.trim_end() == "$ echo easytab-inline-test"
+    });
+    term.send(b"\x1b[C");
+    term.wait_for("la ligne complétée", |t| {
+        t.cursor_line() == "$ echo easytab-inline-test"
     });
 }

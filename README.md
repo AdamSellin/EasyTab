@@ -64,6 +64,7 @@ Then open a new terminal. To update: `easytab update`.
 | Enter | Write it if it completes the typed word, otherwise run the command |
 | Esc | Close the list |
 | Ctrl+Space | Open it again after Esc |
+| → | Accept the grey suggestion from your history |
 
 | Command | |
 |---|---|

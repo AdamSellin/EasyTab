@@ -66,6 +66,7 @@ Ouvre ensuite un nouveau terminal. Pour mettre à jour : `easytab update`.
 | Entrée | L'écrire si elle complète le mot tapé, sinon lancer la commande |
 | Échap | Fermer la liste |
 | Ctrl+Espace | La rouvrir après Échap |
+| → | Accepter la suggestion en gris tirée de l'historique |
 
 | Commande | |
 |---|---|

@@ -2,7 +2,8 @@
 //! le vrai terminal et ce shell, en gardant une copie de l'écran pour savoir ce
 //! que l'utilisateur tape. Il affiche la liste de suggestions par-dessus et
 //! intercepte ↑, ↓, Maj+Tab, Tab, Entrée (après ↑/↓) et Échap quand elle est
-//! visible, et Ctrl+Espace après Échap pour la rouvrir.
+//! visible, Ctrl+Espace après Échap pour la rouvrir, et → pour accepter la
+//! suggestion en gris tirée de l'historique.
 
 mod overlay;
 mod popup;
@@ -96,11 +97,14 @@ impl Shared {
             Some(overlay) => overlay.show(self.popup.view(self.session.screen())),
             None => self.popup.draw(self.session.screen(), frame),
         }
+        // La suggestion en gris reste dans le terminal, même avec la fenêtre.
+        self.popup.draw_inline(self.session.screen(), frame);
     }
 
     /// Cache la liste (restaure l'écran du terminal ou cache la fenêtre).
     fn hide(&mut self, frame: &mut Vec<u8>) {
         self.popup.erase(self.session.screen(), frame);
+        self.popup.erase_inline(self.session.screen(), frame);
         self.popup.leave_overlay();
         if let Some(overlay) = &mut self.overlay {
             overlay.hide();
@@ -316,6 +320,7 @@ fn run(args: Args) -> Result<i32> {
                             Key::Down => popup.select(1),
                             Key::Dismiss => popup.dismiss(),
                             Key::Open => {}
+                            Key::Right => to_shell = popup.accept_inline().unwrap_or_default(),
                             Key::Accept | Key::Enter => {
                                 to_shell = popup.accept().unwrap_or_default()
                             }
