@@ -110,14 +110,23 @@ impl Key {
                 _ => None,
             };
         }
-        let mut pressed = records.iter().filter(|r| r.down);
+        // Maj, Ctrl et Alt arrivent aussi comme touches à part : seule compte
+        // celle qu'ils modifient.
+        let mut pressed = records
+            .iter()
+            .filter(|r| r.down && !matches!(r.vk, VK_SHIFT | VK_CONTROL | VK_MENU));
         let record = pressed.next()?;
         if pressed.next().is_some() {
             return None;
         }
         match (record.vk, record.modifiers & MODIFIERS) {
             (VK_TAB, SHIFT) => return Some(Key::Up),
+            // Ctrl+Espace, ou Ctrl+Maj+2 (Ctrl+@) : c'est ainsi que la
+            // pseudo-console traduit l'octet NUL qu'elle reçoit.
             (VK_SPACE, LEFT_CTRL | RIGHT_CTRL) => return Some(Key::Open),
+            (VK_2, mods) if mods & !SHIFT == LEFT_CTRL || mods & !SHIFT == RIGHT_CTRL => {
+                return Some(Key::Open)
+            }
             (_, 0) => {}
             _ => return None,
         }
@@ -176,6 +185,10 @@ pub fn cursor_report(data: &[u8]) -> Option<(u16, u16, std::ops::Range<usize>)> 
 
 const VK_TAB: u32 = 9;
 const VK_SPACE: u32 = 32;
+const VK_2: u32 = 50;
+const VK_SHIFT: u32 = 16;
+const VK_CONTROL: u32 = 17;
+const VK_MENU: u32 = 18;
 const VK_RETURN: u32 = 13;
 const VK_ESCAPE: u32 = 27;
 const VK_UP: u32 = 38;
@@ -822,6 +835,21 @@ mod tests {
         assert_eq!(Key::parse(b"\x1b[9;15;9;1;16;1_"), Some(Key::Up));
         assert_eq!(Key::parse(b"\x1b[32;57;0;1;8;1_"), Some(Key::Open));
         assert_eq!(Key::parse(b"\x1b[9;15;9;1;8;1_"), None);
+        // NUL traduit par la pseudo-console : Maj, Ctrl, puis 2.
+        assert_eq!(
+            Key::parse(
+                b"\x1b[16;42;0;1;16;1_\x1b[17;29;0;1;24;1_\x1b[50;3;0;1;24;1_\
+                  \x1b[50;3;0;0;24;1_\x1b[17;29;0;0;16;1_\x1b[16;42;0;0;0;1_"
+            ),
+            Some(Key::Open)
+        );
+        // Maj+Tab avec l'appui sur Maj dans le même envoi.
+        assert_eq!(
+            Key::parse(b"\x1b[16;42;0;1;16;1_\x1b[9;15;9;1;16;1_"),
+            Some(Key::Up)
+        );
+        // Ctrl+2 envoie aussi NUL dans les terminaux.
+        assert_eq!(Key::parse(b"\x1b[50;3;0;1;8;1_"), Some(Key::Open));
         assert_eq!(Key::parse(b"\x1b[65;30;97;1;0;1_"), None);
         assert_eq!(Key::parse(b"\x1b[1;5A"), None);
 
