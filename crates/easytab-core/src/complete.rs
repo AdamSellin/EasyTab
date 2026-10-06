@@ -9,13 +9,14 @@ use crate::exec;
 use crate::files;
 use crate::generators::{Generated, Generators, Item};
 use crate::help::HelpSpecs;
-use crate::history::History;
+use crate::history::{self, History, Record};
 use crate::line::{self, Token};
 use crate::project;
 use crate::pwsh::PowerShell;
 use crate::rank::{self, best_match, Usage, LOOSE_RANK};
 use crate::shell::{self, ShellCompletions};
 use crate::spec::{self, Arg, Command, Generator, Opt, Spec, Template};
+use crate::workflow::Workflow;
 
 /// Nombre maximum de suggestions renvoyées.
 const MAX_SUGGESTIONS: usize = 300;
@@ -34,6 +35,9 @@ pub enum Kind {
     History,
     /// Variable d'environnement (`$HOME`, `$env:PATH`).
     Variable,
+    /// Commande enregistrée avec des champs à remplir (`~/.easytab/workflows.toml`) :
+    /// le libellé est la commande entière.
+    Workflow,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -84,6 +88,7 @@ pub struct Completer {
     generators: Generators,
     usage: Mutex<Usage>,
     history: Mutex<History>,
+    workflows: Vec<Workflow>,
     /// Dossier de l'utilisateur (`~/.ssh/config`…).
     home: Option<PathBuf>,
     /// Alias du shell (bash, zsh), par nom.
@@ -105,6 +110,77 @@ struct Context<'a> {
     pending: bool,
     /// Un `generateSpec` calcule encore une partie de la spec.
     generating: bool,
+}
+
+/// Nom le plus proche de `word` (une faute de frappe : lettre en trop, en
+/// moins, changée ou deux lettres inversées ; deux pour un mot de plus de
+/// quatre lettres). À égalité, le plus utilisé.
+fn closest<'a>(
+    word: &str,
+    candidates: impl Iterator<Item = &'a str>,
+    ignore_case: bool,
+    usage: impl Fn(&str) -> u32,
+) -> Option<String> {
+    let fold = |s: &str| -> Vec<char> {
+        if ignore_case {
+            s.to_lowercase().chars().collect()
+        } else {
+            s.chars().collect()
+        }
+    };
+    let typed = fold(word);
+    let limit = if typed.len() > 4 { 2 } else { 1 };
+    candidates
+        .filter(|name| name.chars().count() > 1)
+        .filter_map(|name| {
+            let distance = typo_distance(&typed, &fold(name));
+            (distance > 0 && distance <= limit).then_some((distance, name))
+        })
+        .min_by_key(|&(distance, name)| {
+            let length_gap = name.chars().count().abs_diff(typed.len());
+            (distance, std::cmp::Reverse(usage(name)), length_gap, name)
+        })
+        .map(|(_, name)| name.to_string())
+}
+
+/// Distance de Damerau-Levenshtein (variante « alignement optimal »).
+fn typo_distance(a: &[char], b: &[char]) -> usize {
+    let mut d = vec![vec![0usize; b.len() + 1]; a.len() + 1];
+    for (i, row) in d.iter_mut().enumerate() {
+        row[0] = i;
+    }
+    for (j, cell) in d[0].iter_mut().enumerate() {
+        *cell = j;
+    }
+    for i in 1..=a.len() {
+        for j in 1..=b.len() {
+            let cost = usize::from(a[i - 1] != b[j - 1]);
+            d[i][j] = (d[i - 1][j] + 1)
+                .min(d[i][j - 1] + 1)
+                .min(d[i - 1][j - 1] + cost);
+            if i > 1 && j > 1 && a[i - 1] == b[j - 2] && a[i - 2] == b[j - 1] {
+                d[i][j] = d[i][j].min(d[i - 2][j - 2] + 1);
+            }
+        }
+    }
+    d[a.len()][b.len()]
+}
+
+/// Suggestion d'un workflow : `insert` remplace le mot en cours.
+fn workflow_suggestion(workflow: &Workflow, insert: String) -> Suggestion {
+    Suggestion {
+        label: workflow.command.clone(),
+        insert,
+        description: match (&workflow.name, &workflow.description) {
+            (Some(name), Some(description)) => Some(format!("{name} : {description}")),
+            (name, description) => name.clone().or_else(|| description.clone()),
+        },
+        hint: None,
+        icon: None,
+        kind: Kind::Workflow,
+        append_space: false,
+        rank: 0,
+    }
 }
 
 /// Au plus autant de `loadSpec` à la suite (protège des boucles).
@@ -145,6 +221,7 @@ impl Completer {
             generators: Generators::disabled(),
             usage: Mutex::default(),
             history: Mutex::default(),
+            workflows: Vec::new(),
             home: std::env::var_os("HOME")
                 .or_else(|| std::env::var_os("USERPROFILE"))
                 .map(PathBuf::from),
@@ -174,12 +251,18 @@ impl Completer {
         self
     }
 
-    /// Suite de la commande la plus récente de l'historique qui prolonge
-    /// `input`, affichée en gris après le curseur.
-    pub fn inline(&self, input: &str) -> Option<String> {
+    /// Propose aussi ces commandes à champs.
+    pub fn with_workflows(mut self, workflows: Vec<Workflow>) -> Self {
+        self.workflows = workflows;
+        self
+    }
+
+    /// Suite de la commande de l'historique qui prolonge le mieux `input`,
+    /// affichée en gris après le curseur.
+    pub fn inline(&self, input: &str, cwd: &Path) -> Option<String> {
         let typed = input.trim_start();
         let history = self.history.lock().unwrap();
-        let full = history.matches(input).into_iter().next()?;
+        let full = history.matches(input, Some(cwd)).into_iter().next()?;
         let rest = full.strip_prefix(typed)?;
         (!rest.is_empty() && !rest.contains('\n')).then(|| rest.to_string())
     }
@@ -195,6 +278,176 @@ impl Completer {
             .map(|t| t.value.clone())
             .collect();
         self.usage.lock().unwrap().record(&words);
+    }
+
+    /// Une commande s'est terminée : son dossier, son code de sortie et sa
+    /// durée rejoignent l'historique (et `~/.easytab/history.jsonl`).
+    pub fn finish(&self, record: &Record) {
+        self.history.lock().unwrap().record(record);
+        history::save(record);
+    }
+
+    /// Correction d'une commande qui vient d'échouer, proposée au prompt
+    /// suivant : nom de commande mal tapé (`gti status` → `git status`), quand
+    /// le shell ne l'a pas trouvé, ou sous-commande inconnue (`git stauts` →
+    /// `git status`).
+    pub fn correction(&self, input: &str, exit_code: i32) -> Option<String> {
+        // Une seule commande simple, sans substitution.
+        if exit_code == 0 || input.contains(['|', ';', '&', '`', '$', '(', '\n']) {
+            return None;
+        }
+        let line = line::parse(input);
+        let mut words = line.words;
+        if !line.current.raw.is_empty() {
+            words.push(line.current);
+        }
+        let first = words.first()?;
+        if first.raw != first.value || first.value.contains(['/', '\\']) {
+            return None;
+        }
+        let powershell = self.powershell.is_some();
+        let fixed = if !self.is_known_command(&first.value) {
+            // 127 : « command not found » de bash et zsh. PowerShell ne
+            // donne que réussite ou échec.
+            if exit_code != 127 && !powershell {
+                return None;
+            }
+            let candidates = self.command_names();
+            (
+                0,
+                closest(
+                    &first.value,
+                    candidates.iter().map(String::as_str),
+                    powershell,
+                    |name| self.usage.lock().unwrap().count(&[], name),
+                )?,
+            )
+        } else {
+            self.subcommand_correction(&words)?
+        };
+        let (i, name) = fixed;
+        words[i].raw = line::escape(&name);
+        Some(
+            words
+                .iter()
+                .map(|w| w.raw.as_str())
+                .collect::<Vec<_>>()
+                .join(" "),
+        )
+    }
+
+    /// Le shell connaît ce nom : spec, programme du PATH, commande
+    /// PowerShell ou alias.
+    fn is_known_command(&self, name: &str) -> bool {
+        self.by_name.contains_key(name)
+            || self.aliases.contains_key(name)
+            || self
+                .installed
+                .as_ref()
+                .is_some_and(|lock| lock.get_or_init(exec::installed_programs).contains(name))
+            || self.powershell.as_ref().is_some_and(|powershell| {
+                powershell
+                    .commands()
+                    .iter()
+                    .any(|(command, _)| command.eq_ignore_ascii_case(name))
+            })
+    }
+
+    /// Noms qu'une faute de frappe peut viser : programmes installés (ou,
+    /// sans liste, toutes les specs), commandes PowerShell, alias.
+    fn command_names(&self) -> Vec<String> {
+        let mut names: Vec<String> = match &self.installed {
+            Some(lock) => lock
+                .get_or_init(exec::installed_programs)
+                .iter()
+                .cloned()
+                .collect(),
+            None => self.by_name.keys().cloned().collect(),
+        };
+        names.extend(
+            self.commands[self.custom_from.min(self.commands.len())..]
+                .iter()
+                .flat_map(|c| c.names.iter().cloned()),
+        );
+        if let Some(powershell) = &self.powershell {
+            names.extend(powershell.commands().into_iter().map(|(name, _)| name));
+        }
+        names.extend(self.aliases.keys().cloned());
+        names.sort();
+        names.dedup();
+        names
+    }
+
+    /// Premier mot qui devrait être une sous-commande et n'en est pas une,
+    /// avec la sous-commande la plus proche. Le mot peut aussi être un
+    /// argument (alias de git…), mais la commande a échoué : la proposition
+    /// ne coûte rien.
+    fn subcommand_correction(&self, words: &[Token]) -> Option<(usize, String)> {
+        let mut node = self.find(&words.first()?.value)?;
+        for (i, word) in words.iter().enumerate().skip(1) {
+            if word.value.starts_with('-') || node.subcommands.is_empty() {
+                return None;
+            }
+            if let Some(sub) = node
+                .subcommands
+                .iter()
+                .find(|c| c.names.contains(&word.value))
+            {
+                node = sub;
+                continue;
+            }
+            let names = node
+                .subcommands
+                .iter()
+                .filter(|c| !c.hidden)
+                .flat_map(|c| c.names.iter().map(String::as_str));
+            let usage = self.usage.lock().unwrap();
+            let before: Vec<String> = words[..i].iter().map(|w| w.value.clone()).collect();
+            let name = closest(&word.value, names, false, |name| usage.count(&before, name))?;
+            return Some((i, name));
+        }
+        None
+    }
+
+    /// Recherche de Ctrl+R dans tout l'historique : la ligne entière sert de
+    /// recherche et sera remplacée par la commande choisie. Les workflows qui
+    /// correspondent passent devant.
+    pub fn search(&self, input: &str) -> Completion {
+        let words: Vec<String> = input.split_whitespace().map(str::to_lowercase).collect();
+        let contains_all = |text: &str| {
+            let text = text.to_lowercase();
+            words.iter().all(|w| text.contains(w.as_str()))
+        };
+        let mut out: Vec<Suggestion> = self
+            .workflows
+            .iter()
+            .filter(|w| {
+                contains_all(&format!(
+                    "{} {}",
+                    w.command,
+                    w.name.as_deref().unwrap_or("")
+                ))
+            })
+            .map(|w| workflow_suggestion(w, w.head()))
+            .collect();
+        let now = history::now();
+        let history = self.history.lock().unwrap();
+        out.extend(history.search(input).into_iter().map(|entry| Suggestion {
+            label: entry.line.clone(),
+            insert: entry.line.clone(),
+            description: entry.describe(self.home.as_deref(), now),
+            hint: None,
+            icon: None,
+            kind: Kind::History,
+            append_space: false,
+            rank: 0,
+        }));
+        out.truncate(MAX_SUGGESTIONS);
+        Completion {
+            replace: input.to_string(),
+            suggestions: out,
+            pending: false,
+        }
     }
 
     /// Completer avec les specs embarquées, sans generators.
@@ -310,7 +563,7 @@ impl Completer {
             .history
             .lock()
             .unwrap()
-            .matches(input)
+            .matches(input, Some(cwd))
             .into_iter()
             .filter_map(|full| {
                 let rest = full.trim_start().strip_prefix(typed.trim_start())?;
@@ -326,6 +579,17 @@ impl Completer {
                 })
             })
             .collect();
+        // Puis les workflows dont le début correspond à la ligne.
+        let workflows = self.workflows.iter().filter_map(|w| {
+            let head = w.head();
+            let typed_line = input.trim_start();
+            if typed_line.chars().count() < 2 || !head.starts_with(typed_line) {
+                return None;
+            }
+            let insert = head.strip_prefix(typed.trim_start())?.to_string();
+            Some(workflow_suggestion(w, insert))
+        });
+        let history: Vec<Suggestion> = history.into_iter().chain(workflows).collect();
         out.splice(0..0, history);
         out.truncate(MAX_SUGGESTIONS);
         Completion {
@@ -1149,6 +1413,112 @@ mod tests {
         let found = labels("gi");
         assert!(found.contains(&"git".to_string()), "{found:?}");
         assert!(labels("").is_empty());
+    }
+
+    fn workflows() -> Vec<Workflow> {
+        crate::workflow::parse(
+            "[[workflow]]\nname = \"Shell dans un conteneur\"\ncommand = \"docker exec -it {conteneur} bash\"\n",
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn corrects_failed_commands() {
+        let completer = Completer::from_specs(spec::builtin());
+        // Commande introuvable (127) : le nom le plus proche.
+        assert_eq!(
+            completer.correction("gti status", 127).as_deref(),
+            Some("git status")
+        );
+        assert_eq!(
+            completer.correction("dokcer ps -a", 127).as_deref(),
+            Some("docker ps -a")
+        );
+        // Autre échec d'une commande inconnue : pas une faute de frappe.
+        assert_eq!(completer.correction("gti status", 1), None);
+        // Sous-commande inconnue.
+        assert_eq!(
+            completer.correction("git stauts", 1).as_deref(),
+            Some("git status")
+        );
+        assert_eq!(
+            completer
+                .correction("git remote ad origin x", 129)
+                .as_deref(),
+            Some("git remote add origin x")
+        );
+        // Rien à corriger, ou trop loin.
+        assert_eq!(completer.correction("git status", 1), None);
+        assert_eq!(completer.correction("git checkout mabranche", 1), None);
+        assert_eq!(completer.correction("git zzzzzz", 1), None);
+        assert_eq!(completer.correction("gti status | less", 127), None);
+        assert_eq!(completer.correction("gti status", 0), None);
+    }
+
+    #[test]
+    fn measures_typos() {
+        let d = |a: &str, b: &str| {
+            typo_distance(
+                &a.chars().collect::<Vec<_>>(),
+                &b.chars().collect::<Vec<_>>(),
+            )
+        };
+        assert_eq!(d("gti", "git"), 1);
+        assert_eq!(d("stauts", "status"), 1);
+        assert_eq!(d("comit", "commit"), 1);
+        assert_eq!(d("chekcout", "checkout"), 1);
+        assert_eq!(d("abc", "xyz"), 3);
+    }
+
+    #[test]
+    fn suggests_workflows() {
+        let completer = Completer::new(Vec::new()).with_workflows(workflows());
+        let completion = completer.complete("docker ex", Path::new("/"));
+        let first = &completion.suggestions[0];
+        assert_eq!(first.kind, Kind::Workflow);
+        assert_eq!(first.label, "docker exec -it {conteneur} bash");
+        assert_eq!(completion.replace, "ex");
+        assert_eq!(first.insert, "exec -it ");
+        assert_eq!(
+            first.description.as_deref(),
+            Some("Shell dans un conteneur")
+        );
+        assert!(completer
+            .complete("docker ps", Path::new("/"))
+            .suggestions
+            .is_empty());
+    }
+
+    #[test]
+    fn searches_history_and_workflows() {
+        let completer = Completer::new(Vec::new())
+            .with_workflows(workflows())
+            .with_history(History::new([
+                "docker ps".to_string(),
+                "git status".to_string(),
+            ]));
+        let completion = completer.search("conteneur");
+        assert_eq!(completion.replace, "conteneur");
+        assert_eq!(completion.suggestions.len(), 1);
+        assert_eq!(completion.suggestions[0].insert, "docker exec -it ");
+        let labels: Vec<String> = completer
+            .search("")
+            .suggestions
+            .into_iter()
+            .map(|s| s.label)
+            .collect();
+        assert_eq!(
+            labels,
+            [
+                "docker exec -it {conteneur} bash",
+                "git status",
+                "docker ps"
+            ]
+        );
+        assert_eq!(
+            completer.search("DOCKER P").suggestions[0].insert,
+            "docker ps"
+        );
     }
 
     #[test]

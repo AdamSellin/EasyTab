@@ -27,6 +27,9 @@ pub struct Session {
     receiving_aliases: Option<HashMap<String, String>>,
     /// Liste complète des alias, pas encore relevée par [`Session::take_aliases`].
     aliases: Option<HashMap<String, String>>,
+    /// Fin de commande (`OSC 133;D`) pas encore relevée par
+    /// [`Session::take_finished`], avec son code de sortie.
+    finished: Option<Option<i32>>,
 }
 
 impl Session {
@@ -42,6 +45,7 @@ impl Session {
             cwd: None,
             receiving_aliases: None,
             aliases: None,
+            finished: None,
         }
     }
 
@@ -49,6 +53,13 @@ impl Session {
     /// le dernier appel.
     pub fn take_aliases(&mut self) -> Option<HashMap<String, String>> {
         self.aliases.take()
+    }
+
+    /// Une commande s'est terminée depuis le dernier appel : son code de
+    /// sortie, s'il est connu. Le shell l'annonce aussi avant son premier
+    /// prompt et après une ligne vide.
+    pub fn take_finished(&mut self) -> Option<Option<i32>> {
+        self.finished.take()
     }
 
     pub fn phase(&self) -> Phase {
@@ -151,6 +162,7 @@ impl Session {
             Marker::CommandStart => Phase::Running,
             Marker::CommandEnd { exit_code } => {
                 self.last_exit_code = exit_code;
+                self.finished = Some(exit_code);
                 Phase::Unknown
             }
         };

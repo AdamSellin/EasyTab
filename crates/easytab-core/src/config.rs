@@ -44,11 +44,19 @@ pub const TEMPLATE: &str = r##"# EasyTab settings. Remove the "#" in front of a 
 # (run once in the background, answer kept in ~/.easytab/cache).
 # help = true
 
+# After a command fails because of a typo ("gti status"), suggest the fixed
+# command in grey at the next prompt: Right arrow accepts it.
+# correct = true
+
 [keys]
 # Enter inserts the highlighted suggestion when it completes the typed word
 # or was picked with Up/Down (true), or always runs the command, only Tab
 # inserting (false).
 # enter_inserts = true
+
+# Ctrl+R searches the whole history with the EasyTab list (true), or keeps
+# the shell's own search (false).
+# search = true
 "##;
 
 /// Modèle en français.
@@ -83,11 +91,20 @@ pub const TEMPLATE_FR: &str = r#"# Réglages d'EasyTab. Retirez le « # » devan
 # (lancé une fois en arrière-plan, réponse gardée dans ~/.easytab/cache).
 # help = true
 
+# Après une commande qui échoue à cause d'une faute de frappe (« gti status »),
+# proposer la commande corrigée en gris au prompt suivant : la flèche droite
+# l'accepte.
+# correct = true
+
 [keys]
 # Entrée insère la suggestion surlignée quand elle complète le mot tapé ou
 # qu'on l'a choisie avec ↑/↓ (true), ou lance toujours la commande,
 # seul Tab insérant (false).
 # enter_inserts = true
+
+# Ctrl+R cherche dans tout l'historique avec la liste d'EasyTab (true), ou
+# laisse la recherche du shell (false).
+# search = true
 "#;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
@@ -110,12 +127,16 @@ pub struct List {
     /// Complétions de bash ou fish pour les commandes sans spec.
     pub shell: bool,
     pub help: bool,
+    /// Correction proposée après une faute de frappe.
+    pub correct: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Keys {
     pub enter_inserts: bool,
+    /// Ctrl+R : recherche dans l'historique.
+    pub search: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
@@ -148,6 +169,7 @@ impl Default for List {
             inline: true,
             shell: true,
             help: true,
+            correct: true,
         }
     }
 }
@@ -156,6 +178,7 @@ impl Default for Keys {
     fn default() -> Self {
         Self {
             enter_inserts: true,
+            search: true,
         }
     }
 }
@@ -233,7 +256,9 @@ mod tests {
                 .replace("# inline", "inline")
                 .replace("# shell", "shell")
                 .replace("# help", "help")
-                .replace("# enter_inserts", "enter_inserts");
+                .replace("# correct", "correct")
+                .replace("# enter_inserts", "enter_inserts")
+                .replace("# search", "search");
             assert_eq!(Config::parse(&uncommented).unwrap(), Config::default());
         }
         assert!(template() == TEMPLATE || template() == TEMPLATE_FR);
@@ -243,7 +268,7 @@ mod tests {
     fn reads_settings() {
         let config = Config::parse(
             "[list]\nrows = 12\noverlay = false\ntheme = \"light\"\nicons = \"emoji\"\nhelp = false\ninline = false\nshell = false\n\
-             [keys]\nenter_inserts = false\n",
+             correct = false\n[keys]\nenter_inserts = false\nsearch = false\n",
         )
         .unwrap();
         assert_eq!(config.list.rows, 12);
@@ -254,6 +279,8 @@ mod tests {
         assert!(!config.list.inline);
         assert!(!config.list.shell);
         assert!(!config.keys.enter_inserts);
+        assert!(!config.list.correct);
+        assert!(!config.keys.search);
     }
 
     #[test]

@@ -9,6 +9,9 @@ mod config;
 mod lang;
 mod rc;
 mod update;
+#[path = "../../easytab-core/src/workflow.rs"]
+#[allow(dead_code)]
+mod workflow;
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -59,6 +62,11 @@ enum Command {
         "Crée le fichier de réglages s'il n'existe pas, et affiche son chemin"
     ))]
     Config,
+    #[command(about = tr(
+        "Create the workflows file (saved commands with fields) if it does not exist, and print its path",
+        "Crée le fichier des workflows (commandes avec champs) s'il n'existe pas, et affiche son chemin"
+    ))]
+    Workflows,
     #[command(about = tr("Install the latest published version", "Installe la dernière version publiée"))]
     Update {
         #[arg(long, help = tr(
@@ -175,6 +183,7 @@ fn main() -> Result<()> {
         Command::Uninstall { shell } => uninstall(shell.map_or_else(Shell::detect, Ok)?)?,
         Command::Doctor => doctor()?,
         Command::Config => edit_config()?,
+        Command::Workflows => edit_workflows()?,
         Command::Update { force } => update(force)?,
     }
     Ok(())
@@ -428,6 +437,35 @@ fn doctor() -> Result<()> {
             colon()
         );
     }
+    if let Some(path) = workflow::path() {
+        match workflow::read(&path) {
+            Ok(workflows) if workflows.is_empty() => {}
+            Ok(workflows) => {
+                let count = workflows.len();
+                let path = short(&path);
+                println!(
+                    "{} {}",
+                    mark(true),
+                    tr!(
+                        "{count} workflows in {path}",
+                        "{count} workflows dans {path}"
+                    )
+                );
+            }
+            Err(error) => {
+                let path = short(&path);
+                let error = error.trim().replace('\n', "\n     ");
+                println!(
+                    "{} {}",
+                    mark(false),
+                    tr!(
+                        "{path} is invalid, workflows ignored:\n     {error}",
+                        "{path} est invalide, workflows ignorés :\n     {error}"
+                    )
+                );
+            }
+        }
+    }
     let active = std::env::var_os("EASYTAB_TERM").is_some();
     println!(
         "{} {}",
@@ -477,32 +515,68 @@ fn config_status(path: &Path) -> (bool, String) {
 /// commenté, puis dit où il est.
 fn edit_config() -> Result<()> {
     let path = config::Config::path().context(home_not_found())?;
-    let short_path = short(&path);
-    if !path.exists() {
-        if let Some(dir) = path.parent() {
-            fs::create_dir_all(dir).with_context(|| creating(dir))?;
-        }
-        fs::write(&path, config::template()).with_context(|| writing(&path))?;
-        println!(
-            "{}",
+    edit_file(
+        &path,
+        config::template(),
+        |path| {
             tr!(
-                "Settings file created: {short_path}",
-                "Fichier de réglages créé : {short_path}"
+                "Settings file created: {path}",
+                "Fichier de réglages créé : {path}"
             )
-        );
-    } else {
-        println!(
-            "{}",
-            tr!(
-                "Settings file: {short_path}",
-                "Fichier de réglages : {short_path}"
-            )
-        );
-    }
+        },
+        |path| tr!("Settings file: {path}", "Fichier de réglages : {path}"),
+    )?;
     let (ok, status) = config_status(&path);
     if !ok {
         println!("{} {status}", mark(ok));
     }
+    edit_hint(&path);
+    Ok(())
+}
+
+/// `easytab workflows` : crée `~/.easytab/workflows.toml` avec des exemples,
+/// puis dit où il est.
+fn edit_workflows() -> Result<()> {
+    let path = workflow::path().context(home_not_found())?;
+    edit_file(
+        &path,
+        workflow::template(),
+        |path| {
+            tr!(
+                "Workflows file created: {path}",
+                "Fichier de workflows créé : {path}"
+            )
+        },
+        |path| tr!("Workflows file: {path}", "Fichier de workflows : {path}"),
+    )?;
+    if let Err(error) = workflow::read(&path) {
+        println!("{} {}", mark(false), error.trim());
+    }
+    edit_hint(&path);
+    Ok(())
+}
+
+/// Crée le fichier depuis `template` s'il n'existe pas, et affiche son chemin.
+fn edit_file(
+    path: &Path,
+    template: &str,
+    created: impl Fn(&str) -> String,
+    existing: impl Fn(&str) -> String,
+) -> Result<()> {
+    let short_path = short(path);
+    if !path.exists() {
+        if let Some(dir) = path.parent() {
+            fs::create_dir_all(dir).with_context(|| creating(dir))?;
+        }
+        fs::write(path, template).with_context(|| writing(path))?;
+        println!("{}", created(&short_path));
+    } else {
+        println!("{}", existing(&short_path));
+    }
+    Ok(())
+}
+
+fn edit_hint(path: &Path) {
     let editor = if cfg!(windows) {
         "notepad"
     } else {
@@ -516,7 +590,6 @@ fn edit_config() -> Result<()> {
             "Modifiez-le ({editor} \"{path}\"), puis rouvrez vos terminaux."
         )
     );
-    Ok(())
 }
 
 /// `easytab-term` installé à côté de `easytab`, sinon cherché dans le PATH.

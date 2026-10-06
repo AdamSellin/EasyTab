@@ -363,6 +363,80 @@ fn bash_suggests_history() {
     });
 }
 
+/// Ctrl+R cherche dans tout l'historique : la ligne devient la recherche,
+/// Tab la remplace par la commande choisie.
+#[test]
+fn bash_searches_history_with_ctrl_r() {
+    let Some(mut term) = start_bash("bash-search", |home| {
+        std::fs::write(home.join(".bash_history"), "echo easytab-search-test\nls\n").unwrap();
+    }) else {
+        return;
+    };
+    term.send(b"\x12");
+    term.pump(Duration::from_millis(300));
+    term.send(b"search");
+    term.wait_for("la commande trouvée", |t| {
+        t.screen().contains("echo easytab-search-test") && t.cursor_line() == "$ search"
+    });
+    term.send(b"\t");
+    term.wait_for("la ligne remplacée", |t| {
+        t.cursor_line() == "$ echo easytab-search-test"
+    });
+}
+
+/// Après une faute de frappe (`ecoh`, introuvable), la commande corrigée
+/// s'affiche en gris au prompt suivant ; → l'accepte.
+#[test]
+fn bash_proposes_a_correction() {
+    let Some(mut term) = start_bash("bash-correct", |_| {}) else {
+        return;
+    };
+    term.send(b"ecoh easytab-fix");
+    term.wait_for("la commande tapée", |t| {
+        t.cursor_line() == "$ ecoh easytab-fix"
+    });
+    term.send(b"\r");
+    term.wait_for("la correction en gris", |t| {
+        t.cursor_line() == "$" && t.screen().contains("$ echo easytab-fix")
+    });
+    term.send(b"\x1b[C");
+    term.wait_for("la correction acceptée", |t| {
+        t.cursor_line() == "$ echo easytab-fix"
+    });
+}
+
+/// Un workflow de `~/.easytab/workflows.toml` : choisi dans la liste, puis
+/// valeur du champ tapée, → ajoute la suite de la commande.
+#[test]
+fn bash_fills_a_workflow() {
+    let Some(mut term) = start_bash("bash-workflow", |home| {
+        std::fs::create_dir_all(home.join(".easytab")).unwrap();
+        std::fs::write(
+            home.join(".easytab").join("workflows.toml"),
+            "[[workflow]]\nname = \"Test\"\ncommand = \"echo easytab-wf {mot} fin-du-workflow\"\n",
+        )
+        .unwrap();
+    }) else {
+        return;
+    };
+    term.send(b"echo easytab-w");
+    term.wait_for("le workflow dans la liste", |t| {
+        t.screen().contains("{mot} fin-du-workflow") && t.cursor_line() == "$ echo easytab-w"
+    });
+    term.send(b"\t");
+    term.wait_for("le début du workflow", |t| {
+        t.cursor_line() == "$ echo easytab-wf"
+    });
+    term.send(b"abc");
+    term.wait_for("la suite en gris", |t| {
+        t.cursor_line() == "$ echo easytab-wf abc" && t.screen().contains("abc fin-du-workflow")
+    });
+    term.send(b"\x1b[C");
+    term.wait_for("la commande complète", |t| {
+        t.cursor_line() == "$ echo easytab-wf abc fin-du-workflow"
+    });
+}
+
 /// Entrée prend la suggestion surlignée qui complète le mot, sans flèche,
 /// et ne lance pas la commande.
 #[test]

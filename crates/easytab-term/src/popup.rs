@@ -6,7 +6,9 @@ use std::io::Write;
 use std::path::Path;
 
 use easytab_core::config::{Config, Icons, Theme};
+use easytab_core::lang::tr;
 use easytab_core::overlay::{Row, View};
+use easytab_core::workflow::Fill;
 use easytab_core::{Completer, Completion, Kind, Session};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
@@ -66,6 +68,8 @@ pub enum Key {
     Open,
     /// Flèche droite : accepte la suggestion en gris.
     Right,
+    /// Ctrl+R : recherche dans tout l'historique.
+    Search,
 }
 
 impl Key {
@@ -78,6 +82,7 @@ impl Key {
             b"\x1b[C" | b"\x1bOC" => Some(Key::Right),
             b"\t" => Some(Key::Accept),
             b"\0" => Some(Key::Open),
+            b"\x12" => Some(Key::Search),
             b"\r" => Some(Key::Enter),
             b"\x1b" => Some(Key::Dismiss),
             _ => Self::parse_win32(data),
@@ -125,6 +130,7 @@ impl Key {
         }
         match (record.vk, record.modifiers & MODIFIERS) {
             (VK_TAB, SHIFT) => return Some(Key::Up),
+            (VK_R, LEFT_CTRL | RIGHT_CTRL) => return Some(Key::Search),
             // Ctrl+Espace, ou Ctrl+@ : la pseudo-console traduit l'octet NUL
             // qu'elle reçoit en Ctrl (et Maj) plus la touche du « @ », qui
             // dépend du clavier (2 en QWERTY, 0/à en AZERTY). Toutes ces
@@ -194,6 +200,7 @@ pub fn cursor_report(data: &[u8]) -> Option<(u16, u16, std::ops::Range<usize>)> 
 }
 
 const VK_TAB: u32 = 9;
+const VK_R: u32 = 0x52;
 const VK_SPACE: u32 = 32;
 const VK_SHIFT: u32 = 16;
 const VK_CONTROL: u32 = 17;
@@ -260,6 +267,12 @@ struct Area {
     rows: u16,
 }
 
+/// Texte en gris après le curseur, et ce que → insère.
+struct Inline {
+    shown: String,
+    accept: Option<String>,
+}
+
 #[derive(Default)]
 pub struct Popup {
     completion: Option<Completion>,
@@ -276,8 +289,16 @@ pub struct Popup {
     navigated: bool,
     /// La liste est affichée dans la fenêtre flottante.
     in_overlay: bool,
-    /// Suite proposée en gris après le curseur, tirée de l'historique.
-    inline: Option<String>,
+    /// Suggestion en gris après le curseur : suite tirée de l'historique,
+    /// correction ou reste d'un workflow.
+    inline: Option<Inline>,
+    /// Ctrl+R : la ligne est une recherche dans tout l'historique.
+    search: bool,
+    /// Correction de la commande qui vient d'échouer, proposée sur la ligne
+    /// vide du prompt suivant.
+    correction: Option<String>,
+    /// Workflow en cours de remplissage.
+    fill: Option<Fill>,
     /// Ligne de l'écran où la suggestion en gris est dessinée.
     inline_drawn: Option<u16>,
     /// Réglages de `~/.easytab/config.toml`.
@@ -326,13 +347,37 @@ impl Popup {
             return;
         }
         self.dismissed_for = None;
-        if input.trim().is_empty() || input.contains('\n') {
+        if input.contains('\n') {
             return;
         }
-        if self.config.list.inline {
-            self.inline = completer.inline(&input);
-        }
-        let completion = completer.complete(&input, session.cwd().unwrap_or(fallback_cwd));
+        let cwd = session.cwd().unwrap_or(fallback_cwd);
+        let completion = if self.search {
+            completer.search(&input)
+        } else if input.trim().is_empty() {
+            self.inline = self.correction.as_ref().map(|correction| Inline {
+                shown: format!("{correction}   [→ {}]", tr("fix", "corriger")),
+                accept: Some(correction.clone()),
+            });
+            return;
+        } else {
+            self.correction = None;
+            if let Some(fill) = &self.fill {
+                self.inline = fill.hint(&input).map(|hint| Inline {
+                    shown: hint.shown,
+                    accept: hint.accept,
+                });
+                if self.inline.is_none() {
+                    self.fill = None;
+                }
+            }
+            if self.inline.is_none() && self.config.list.inline {
+                self.inline = completer.inline(&input, cwd).map(|rest| Inline {
+                    shown: rest.clone(),
+                    accept: Some(rest),
+                });
+            }
+            completer.complete(&input, cwd)
+        };
         let only_exact = matches!(
             completion.suggestions.as_slice(),
             [only] if only.insert == completion.replace
@@ -377,7 +422,11 @@ impl Popup {
             // Ailleurs, Ctrl+Espace reste au shell (complétion de PowerShell).
             Key::Open => !self.is_shown() && self.is_dismissed(),
             Key::Enter => self.is_shown() && self.enter_inserts(),
-            Key::Right => self.inline_drawn.is_some(),
+            Key::Right => {
+                self.inline_drawn.is_some()
+                    && self.inline.as_ref().is_some_and(|i| i.accept.is_some())
+            }
+            Key::Search => self.config.keys.search && (self.search || self.last_input.is_some()),
             _ => self.is_shown(),
         }
     }
@@ -401,7 +450,7 @@ impl Popup {
         if !self.config.keys.enter_inserts {
             return false;
         }
-        if self.navigated {
+        if self.navigated || self.search {
             return true;
         }
         let Some(completion) = &self.completion else {
@@ -417,21 +466,49 @@ impl Popup {
         self.dismissed_for = self.last_input.clone();
         self.completion = None;
         self.inline = None;
+        self.search = false;
+    }
+
+    /// Ctrl+R : passe en recherche dans l'historique, ou en sort.
+    pub fn toggle_search(&mut self) {
+        self.search = !self.search;
+        self.completion = None;
+        self.dismissed_for = None;
+        self.last_input = None;
+    }
+
+    /// Correction à proposer au prompt suivant (après une commande en échec).
+    pub fn set_correction(&mut self, correction: Option<String>) {
+        self.correction = correction.filter(|_| self.config.list.correct);
+    }
+
+    /// La ligne part au shell : la recherche, la correction et le workflow en
+    /// cours s'arrêtent.
+    pub fn submitted(&mut self) {
+        self.search = false;
+        self.correction = None;
+        self.fill = None;
     }
 
     /// Octets à envoyer au shell pour accepter la suggestion en gris.
     pub fn accept_inline(&mut self) -> Option<Vec<u8>> {
-        let rest = self.inline.take()?;
+        let rest = self.inline.take()?.accept?;
         self.completion = None;
+        self.correction = None;
+        let input = self.last_input.take().unwrap_or_default();
+        if let Some(fill) = &mut self.fill {
+            if !fill.advance(&input, &rest) {
+                self.fill = None;
+            }
+        }
         // La ligne change : la prochaine mise à jour recalculera la liste.
-        self.last_input = None;
         Some(rest.into_bytes())
     }
 
     /// Dessine la suggestion en gris après le curseur, si le reste de la
     /// ligne est vide (sinon le curseur n'est pas en fin de saisie).
     pub fn draw_inline(&mut self, screen: &vt100::Screen, out: &mut Vec<u8>) {
-        let Some(rest) = &self.inline else {
+        let Some(Inline { shown: rest, .. }) = &self.inline else {
             return;
         };
         let (_, cols) = screen.size();
@@ -475,7 +552,14 @@ impl Popup {
             insert.push(' ');
         }
         // La ligne change : la prochaine mise à jour recalculera la liste.
-        self.last_input = None;
+        let input = self.last_input.take().unwrap_or_default();
+        self.search = false;
+        if suggestion.kind == Kind::Workflow {
+            let line = input
+                .strip_suffix(completion.replace.as_str())
+                .unwrap_or(&input);
+            self.fill = Fill::start(&format!("{line}{insert}"), &suggestion.label);
+        }
         Some(match insert.strip_prefix(&completion.replace) {
             Some(rest) => rest.as_bytes().to_vec(),
             None => {
@@ -713,6 +797,7 @@ fn kind_name(kind: Kind) -> &'static str {
         Kind::Dynamic => "dynamic",
         Kind::History => "history",
         Kind::Variable => "variable",
+        Kind::Workflow => "workflow",
     }
 }
 
@@ -736,6 +821,7 @@ fn badge(kind: Kind, icons: Icons) -> String {
         Kind::Dynamic => ('@', 166, "🌿"),
         Kind::History => ('↺', 61, "🕘"),
         Kind::Variable => ('$', 31, "💲"),
+        Kind::Workflow => ('▸', 162, "⚡"),
     };
     match icons {
         Icons::Badges => format!("\x1b[0;1;38;5;231;48;5;{color}m {symbol} "),
@@ -1066,6 +1152,82 @@ mod tests {
         popup.draw_inline(session.screen(), &mut out);
         assert!(out.is_empty());
         assert!(!popup.handles(Key::Right));
+    }
+
+    #[test]
+    fn ctrl_r_searches_the_whole_history() {
+        assert_eq!(Key::parse(b"\x12"), Some(Key::Search));
+        // Windows : Ctrl puis R en win32-input-mode.
+        assert_eq!(
+            Key::parse(b"\x1b[17;29;0;1;8;1_\x1b[82;19;18;1;8;1_"),
+            Some(Key::Search)
+        );
+        let completer = Completer::builtin();
+        completer.record("docker compose up -d");
+        completer.record("git status");
+        let session = session_with(b"compose");
+        let mut popup = Popup::default();
+        popup.update(&session, &completer, Path::new("/"));
+        assert!(popup.handles(Key::Search));
+        popup.toggle_search();
+        popup.update(&session, &completer, Path::new("/"));
+        assert!(popup.is_shown() || popup.view(session.screen()).is_some());
+        // Entrée remplace toute la ligne par la commande choisie.
+        assert!(popup.handles(Key::Enter));
+        assert_eq!(
+            popup.accept().as_deref(),
+            Some(&b"\x7f\x7f\x7f\x7f\x7f\x7f\x7fdocker compose up -d"[..])
+        );
+        assert!(!popup.search);
+    }
+
+    #[test]
+    fn proposes_the_correction_on_the_empty_line() {
+        let completer = Completer::builtin();
+        let mut popup = Popup::default();
+        popup.set_correction(Some("git status".into()));
+        let session = session_with(b"");
+        popup.update(&session, &completer, Path::new("/"));
+        let mut out = Vec::new();
+        popup.draw_inline(session.screen(), &mut out);
+        assert!(String::from_utf8_lossy(&out).contains("git status"));
+        assert!(popup.handles(Key::Right));
+        assert_eq!(popup.accept_inline().as_deref(), Some(&b"git status"[..]));
+        // Une fois la ligne commencée, elle n'est plus proposée.
+        popup.set_correction(Some("git status".into()));
+        popup.update(&session_with(b"l"), &completer, Path::new("/"));
+        popup.update(&session_with(b""), &completer, Path::new("/"));
+        assert!(popup.inline.is_none());
+    }
+
+    #[test]
+    fn fills_a_workflow() {
+        let workflows = easytab_core::workflow::parse(
+            "[[workflow]]\ncommand = \"docker exec -it {conteneur} bash\"\n",
+        )
+        .unwrap();
+        let completer = Completer::new(Vec::new()).with_workflows(workflows);
+        let mut popup = Popup::default();
+        popup.update(&session_with(b"docker ex"), &completer, Path::new("/"));
+        assert_eq!(popup.accept().as_deref(), Some(&b"ec -it "[..]));
+        // Champ vide : le reste en gris, → n'insère rien.
+        popup.update(
+            &session_with(b"docker exec -it "),
+            &completer,
+            Path::new("/"),
+        );
+        let mut out = Vec::new();
+        let session = session_with(b"docker exec -it ");
+        popup.draw_inline(session.screen(), &mut out);
+        assert!(String::from_utf8_lossy(&out).contains("{conteneur} bash"));
+        assert!(!popup.handles(Key::Right));
+        // Valeur tapée : → ajoute la suite.
+        let session = session_with(b"docker exec -it web");
+        popup.update(&session, &completer, Path::new("/"));
+        popup.draw_inline(session.screen(), &mut out);
+        assert!(popup.handles(Key::Right));
+        assert_eq!(popup.accept_inline().as_deref(), Some(&b" bash"[..]));
+        assert!(popup.fill.is_none());
     }
 
     #[test]

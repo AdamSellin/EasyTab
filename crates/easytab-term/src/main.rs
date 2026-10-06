@@ -2,8 +2,9 @@
 //! le vrai terminal et ce shell, en gardant une copie de l'écran pour savoir ce
 //! que l'utilisateur tape. Il affiche la liste de suggestions par-dessus et
 //! intercepte ↑, ↓, Maj+Tab, Tab, Entrée (après ↑/↓) et Échap quand elle est
-//! visible, Ctrl+Espace après Échap pour la rouvrir, et → pour accepter la
-//! suggestion en gris tirée de l'historique.
+//! visible, Ctrl+Espace après Échap pour la rouvrir, → pour accepter la
+//! suggestion en gris (historique, correction, suite d'un workflow) et Ctrl+R
+//! pour chercher dans l'historique.
 
 mod overlay;
 mod popup;
@@ -19,11 +20,12 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result};
 use clap::Parser;
 use crossterm::terminal;
-use easytab_core::history::{History, Shell as HistoryShell};
+use easytab_core::history::{History, Record, Shell as HistoryShell};
 use easytab_core::lang::tr;
 use easytab_core::tr;
 use easytab_core::{
-    spec, Completer, Config, Generators, HelpSpecs, PowerShell, Session, ShellCompletions, Usage,
+    spec, workflow, Completer, Config, Generators, HelpSpecs, PowerShell, Session,
+    ShellCompletions, Usage,
 };
 use overlay::Overlay;
 use popup::{Key, Popup};
@@ -57,6 +59,8 @@ struct Shared {
     /// tapé (sinon Tab compléterait l'ancien mot).
     last_typed: Option<Instant>,
     last_output: Instant,
+    /// Commande lancée et pas encore terminée : ligne, dossier, début.
+    running: Option<(String, PathBuf, Instant)>,
 }
 
 impl Shared {
@@ -219,6 +223,7 @@ fn run(args: Args) -> Result<i32> {
         completer: {
             let mut completer = Completer::builtin()
                 .with_custom(load_custom_specs())
+                .with_workflows(workflow::load())
                 .with_generators(generators)
                 .with_usage(load_usage());
             if let Some(shell_completions) = shell_completions {
@@ -243,6 +248,7 @@ fn run(args: Args) -> Result<i32> {
         fallback_cwd,
         last_typed: None,
         last_output: Instant::now(),
+        running: None,
     }));
     let mut log = open_log();
 
@@ -328,6 +334,12 @@ fn run(args: Args) -> Result<i32> {
                         shared.popup.reopen();
                         shared.refresh(&mut frame);
                     }
+                    Some(Key::Search) => {
+                        to_shell.clear();
+                        shared.hide(&mut frame);
+                        shared.popup.toggle_search();
+                        shared.refresh(&mut frame);
+                    }
                     Some(key) => {
                         shared.hide(&mut frame);
                         to_shell.clear();
@@ -336,7 +348,7 @@ fn run(args: Args) -> Result<i32> {
                             Key::Up => popup.select(-1),
                             Key::Down => popup.select(1),
                             Key::Dismiss => popup.dismiss(),
-                            Key::Open => {}
+                            Key::Open | Key::Search => {}
                             Key::Right => to_shell = popup.accept_inline().unwrap_or_default(),
                             Key::Accept | Key::Enter => {
                                 to_shell = popup.accept().unwrap_or_default()
@@ -349,7 +361,16 @@ fn run(args: Args) -> Result<i32> {
                         if Key::submits(data) {
                             if let Some(line) = shared.session.current_input() {
                                 shared.completer.record(&line);
+                                if !line.trim().is_empty() {
+                                    let cwd = shared
+                                        .session
+                                        .cwd()
+                                        .unwrap_or(&shared.fallback_cwd)
+                                        .to_path_buf();
+                                    shared.running = Some((line, cwd, Instant::now()));
+                                }
                             }
+                            shared.popup.submitted();
                             shared.hide(&mut frame);
                             shared.session.feed_input(b"\r");
                             shared.last_typed = None;
@@ -464,6 +485,20 @@ fn run(args: Args) -> Result<i32> {
             shared.session.feed_output(&buf[..n]);
             if let Some(aliases) = shared.session.take_aliases() {
                 shared.completer.set_aliases(aliases);
+            }
+            // Commande terminée : son dossier, son code de sortie et sa durée
+            // vont dans l'historique ; si elle a échoué sur une faute de
+            // frappe, la correction est proposée au prompt suivant.
+            if let Some(exit_code) = shared.session.take_finished() {
+                if let Some((line, cwd, started)) = shared.running.take() {
+                    if use_history {
+                        let record = Record::new(&line, Some(&cwd), exit_code, started.elapsed());
+                        shared.completer.finish(&record);
+                    }
+                    let correction =
+                        exit_code.and_then(|code| shared.completer.correction(&line, code));
+                    shared.popup.set_correction(correction);
+                }
             }
             shared.last_output = Instant::now();
             let output = &buf[..n];
