@@ -30,8 +30,8 @@ cargo test
 
 - Réglages de l'utilisateur : `crates/easytab-core/src/config.rs` (`~/.easytab/config.toml`),
   partagé avec `easytab-cli` par `#[path]` pour ne pas y embarquer QuickJS. Tout nouveau réglage
-  va aussi dans `TEMPLATE` et dans `docs/guide.md` (le README reste court). `README.md` est en
-  anglais, `README.fr.md` en français : changer les deux ensemble.
+  va aussi dans `TEMPLATE` (anglais) et `TEMPLATE_FR`, et dans `docs/guide.md` (le README reste
+  court). `README.md` est en anglais, `README.fr.md` en français : changer les deux ensemble.
 - Ordre des specs d'une commande (`Completer::complete_words`) : `~/.easytab/specs` (`spec::custom`),
   puis Fig, puis PowerShell (`pwsh.rs`), puis `--help` (`help.rs`). Valeurs lues dans les fichiers
   du projet ou de l'utilisateur (Makefile, composer.json, angular.json, package.json,
@@ -40,7 +40,11 @@ cargo test
 
 ## Conventions
 
-- Code, commentaires, messages, commits et PR en français.
+- Code, commentaires, commits et PR en français. Les messages affichés à l'utilisateur sont
+  bilingues : anglais par défaut, français si le système l'est (`EASYTAB_LANG` force le choix).
+  En Rust, `tr("english", "français")` ou `tr!("… {x}", "… {x}")` de
+  `crates/easytab-core/src/lang.rs` (partagé avec `easytab-cli` par `#[path]`) ; dans les
+  scripts d'installation, `say`/`Tr`.
 - Une PR par sujet, fusionnée en squash. Tests unitaires dans le fichier du code (`mod tests`).
 - `shell-integration/easytab.ps1` et les chaînes de `scripts/install.ps1` restent en ASCII :
   Windows PowerShell 5.1 lit l'UTF-8 sans BOM comme de l'ANSI, et `irm | iex` refuse un BOM.

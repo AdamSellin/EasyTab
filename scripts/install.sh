@@ -3,15 +3,31 @@
 #   curl -fsSL https://github.com/AdamSellin/EasyTab/releases/latest/download/install.sh | sh
 # Dépôt privé : depuis un clone du dépôt, `sh scripts/install.sh`. Le script se
 # sert alors des identifiants GitHub de git (ou de $GITHUB_TOKEN, ou de gh).
-# Variables : EASYTAB_VERSION (ex. v0.2.0, défaut : la dernière), EASYTAB_SHELL (zsh ou bash).
+# Variables : EASYTAB_VERSION (ex. v0.2.0, défaut : la dernière), EASYTAB_SHELL (zsh ou bash),
+# EASYTAB_LANG (fr ou en, défaut : selon la locale).
 set -eu
+
+# Messages en anglais, ou en français si la locale l'est (EASYTAB_LANG passe
+# avant, comme pour easytab lui-même).
+lang="${EASYTAB_LANG:-${LC_ALL:-${LC_MESSAGES:-${LANG:-}}}}"
+case "$lang" in
+  fr*|FR*) fr=1 ;;
+  *) fr= ;;
+esac
+# say "english" "français" : affiche le message dans la langue choisie.
+say() {
+  if [ -n "$fr" ]; then printf '%s\n' "$2"; else printf '%s\n' "$1"; fi
+}
 
 repo="AdamSellin/EasyTab"
 case "$(uname -s)-$(uname -m)" in
   Linux-x86_64) target="x86_64-unknown-linux-gnu" ;;
   Darwin-arm64) target="aarch64-apple-darwin" ;;
   Darwin-x86_64) target="x86_64-apple-darwin" ;;
-  *) echo "easytab : système non pris en charge ($(uname -s) $(uname -m))" >&2; exit 1 ;;
+  *)
+    say "easytab: unsupported system ($(uname -s) $(uname -m))" \
+      "easytab : système non pris en charge ($(uname -s) $(uname -m))" >&2
+    exit 1 ;;
 esac
 
 asset="easytab-$target.tar.gz"
@@ -45,14 +61,16 @@ private_download() {
     "$asset_url" -o "$archive"
 }
 
-echo "Téléchargement de $url"
+say "Downloading $url" "Téléchargement de $url"
 if ! curl -fsSL "$url" -o "$archive" 2>/dev/null; then
-  echo "Lien direct indisponible (dépôt privé ?), téléchargement avec tes identifiants GitHub"
+  say "Direct link unavailable (private repository?), downloading with your GitHub credentials" \
+    "Lien direct indisponible (dépôt privé ?), téléchargement avec tes identifiants GitHub"
   if ! private_download; then
     if command -v gh >/dev/null 2>&1; then
       gh release download ${EASYTAB_VERSION:-} -R "$repo" -p "$asset" -O "$archive"
     else
-      echo "easytab : téléchargement impossible. Dépôt privé : connecte git à GitHub, ou définis GITHUB_TOKEN." >&2
+      say "easytab: download failed. Private repository: connect git to GitHub, or set GITHUB_TOKEN." \
+        "easytab : téléchargement impossible. Dépôt privé : connecte git à GitHub, ou définis GITHUB_TOKEN." >&2
       exit 1
     fi
   fi

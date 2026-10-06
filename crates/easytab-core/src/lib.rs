@@ -19,6 +19,7 @@ mod files;
 mod generators;
 pub mod help;
 pub mod history;
+pub mod lang;
 pub mod line;
 mod osc;
 pub mod overlay;

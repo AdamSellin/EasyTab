@@ -18,6 +18,8 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use crossterm::terminal;
 use easytab_core::history::{History, Shell as HistoryShell};
+use easytab_core::lang::tr;
+use easytab_core::tr;
 use easytab_core::{spec, Completer, Config, Generators, HelpSpecs, PowerShell, Session, Usage};
 use overlay::Overlay;
 use popup::{Key, Popup};
@@ -112,15 +114,23 @@ impl Shared {
     }
 }
 
+// Textes d'aide en attributs plutôt qu'en `///`, pour suivre la langue.
 #[derive(Parser)]
-#[command(version, about = "Lance un shell sous EasyTab")]
+#[command(version, about = tr("Run a shell under EasyTab", "Lance un shell sous EasyTab"))]
 struct Args {
-    /// Shell à lancer (par défaut : $SHELL)
-    #[arg(long)]
+    #[arg(long, help = tr("Shell to run (default: $SHELL)", "Shell à lancer (par défaut : $SHELL)"))]
     shell: Option<String>,
-    /// Arguments transmis au shell
-    #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+    #[arg(
+        trailing_var_arg = true,
+        allow_hyphen_values = true,
+        help = tr("Arguments passed to the shell", "Arguments transmis au shell")
+    )]
     args: Vec<String>,
+}
+
+/// Contexte d'erreur « lancement de <shell> ».
+fn launching(shell: &str) -> String {
+    tr!("running {shell}", "lancement de {shell}")
 }
 
 fn main() -> Result<()> {
@@ -141,7 +151,10 @@ fn run(args: Args) -> Result<i32> {
 
     let pair = native_pty_system()
         .openpty(pty_size(rows, cols))
-        .context("ouverture du pseudo-terminal")?;
+        .context(tr(
+            "opening the pseudo-terminal",
+            "ouverture du pseudo-terminal",
+        ))?;
     let mut cmd = CommandBuilder::new(&shell);
     cmd.args(&args.args);
     let fallback_cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"));
@@ -150,7 +163,7 @@ fn run(args: Args) -> Result<i32> {
     let mut child = pair
         .slave
         .spawn_command(cmd)
-        .with_context(|| format!("lancement de {shell}"))?;
+        .with_context(|| launching(&shell))?;
     drop(pair.slave);
 
     let mut reader = pair.master.try_clone_reader()?;
@@ -451,7 +464,9 @@ fn run(args: Args) -> Result<i32> {
         let _ = output_done.send(());
     });
 
-    let status = child.wait().context("attente du shell")?;
+    let status = child
+        .wait()
+        .context(tr("waiting for the shell", "attente du shell"))?;
     // Laisse la sortie se vider ; sous Windows, ConPTY ne signale pas toujours
     // la fin du flux, d'où le délai maximum.
     let _ = output_finished.recv_timeout(Duration::from_millis(500));
@@ -492,8 +507,13 @@ fn terminal_supported() -> bool {
         // programmes Windows : la frappe n'arrive qu'à l'appui sur Entrée.
         // L'intégration bash passe par winpty quand il est là.
         eprintln!(
-            "easytab : ce terminal ne fournit pas de console Windows, les suggestions sont \
-             désactivées. Installe winpty, ou ouvre Git Bash dans Windows Terminal ou VS Code."
+            "{}",
+            tr(
+                "easytab: this terminal does not provide a Windows console, suggestions are \
+                 disabled. Install winpty, or open Git Bash in Windows Terminal or VS Code.",
+                "easytab : ce terminal ne fournit pas de console Windows, les suggestions sont \
+                 désactivées. Installe winpty, ou ouvre Git Bash dans Windows Terminal ou VS Code."
+            )
         );
         return false;
     }
@@ -521,7 +541,7 @@ fn run_direct(shell: &str, args: &[String]) -> Result<i32> {
         .args(args)
         .env(DISABLE_ENV, "1")
         .status()
-        .with_context(|| format!("lancement de {shell}"))?;
+        .with_context(|| launching(shell))?;
     Ok(status.code().unwrap_or(1))
 }
 
@@ -623,7 +643,8 @@ fn load_custom_specs() -> Vec<spec::Spec> {
     let (specs, errors) = spec::custom(&home.join(".easytab").join("specs"));
     if let Some(mut log) = open_log().filter(|_| !errors.is_empty()) {
         for error in errors {
-            let _ = writeln!(log, "spec ignorée : {error}");
+            let message = tr!("spec ignored: {error}", "spec ignorée : {error}");
+            let _ = writeln!(log, "{message}");
         }
     }
     specs
@@ -651,7 +672,10 @@ struct RawMode {
 
 impl RawMode {
     fn enable() -> Result<Self> {
-        terminal::enable_raw_mode().context("passage du terminal en mode brut")?;
+        terminal::enable_raw_mode().context(tr(
+            "switching the terminal to raw mode",
+            "passage du terminal en mode brut",
+        ))?;
         Ok(Self {
             #[cfg(windows)]
             console: vt::enable(),

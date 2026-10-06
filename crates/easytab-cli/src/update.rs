@@ -9,6 +9,9 @@ use std::process::{Command, Stdio};
 use anyhow::{bail, Context, Result};
 use serde::Deserialize;
 
+// La fonction `tr` (importée à la racine) et la macro `tr!`.
+use crate::tr;
+
 const REPO: &str = "AdamSellin/EasyTab";
 
 #[derive(Deserialize)]
@@ -32,7 +35,10 @@ fn target() -> Result<&'static str> {
         ("linux", "x86_64") => "x86_64-unknown-linux-gnu",
         ("macos", "aarch64") => "aarch64-apple-darwin",
         ("macos", "x86_64") => "x86_64-apple-darwin",
-        (os, arch) => bail!("pas de version publiée pour {os} {arch}"),
+        (os, arch) => bail!(tr!(
+            "no published version for {os} {arch}",
+            "pas de version publiée pour {os} {arch}"
+        )),
     })
 }
 
@@ -115,9 +121,12 @@ fn curl(token: Option<&str>, accept: &str, url: &str, output: Option<&Path>) -> 
         .arg(url)
         .stderr(Stdio::null())
         .output()
-        .context("curl introuvable")?;
+        .context(tr("curl not found", "curl introuvable"))?;
     if !result.status.success() {
-        bail!("échec du téléchargement de {url}");
+        bail!(tr!(
+            "download of {url} failed",
+            "échec du téléchargement de {url}"
+        ));
     }
     Ok(result.stdout)
 }
@@ -129,24 +138,42 @@ fn latest_release() -> Result<(Release, Option<String>)> {
     let (body, token) = match curl(None, accept, &url, None) {
         Ok(body) => (body, None),
         Err(_) => {
-            let token = github_token().context(
-                "dépôt privé : connecte git à GitHub, ou définis GITHUB_TOKEN, puis relance",
-            )?;
-            let body = curl(Some(&token), accept, &url, None)
-                .context("impossible de lire la dernière version sur GitHub")?;
+            let token = github_token().context(private_repo())?;
+            let body = curl(Some(&token), accept, &url, None).context(tr(
+                "cannot read the latest version on GitHub",
+                "impossible de lire la dernière version sur GitHub",
+            ))?;
             (body, Some(token))
         }
     };
-    let release = serde_json::from_slice(&body).context("réponse de GitHub illisible")?;
+    let release = serde_json::from_slice(&body).context(tr(
+        "unreadable answer from GitHub",
+        "réponse de GitHub illisible",
+    ))?;
     Ok((release, token))
+}
+
+/// Erreur quand le dépôt est privé et qu'aucun jeton ne marche.
+fn private_repo() -> &'static str {
+    tr(
+        "private repository: connect git to GitHub, or set GITHUB_TOKEN, then try again",
+        "dépôt privé : connecte git à GitHub, ou définis GITHUB_TOKEN, puis relance",
+    )
 }
 
 pub fn run(force: bool, installed_shells: &[&str]) -> Result<()> {
     let current = env!("CARGO_PKG_VERSION");
     let target = target()?;
     let (release, token) = latest_release()?;
-    if is_current(&release.tag_name, current) && !force {
-        println!("EasyTab est à jour ({}).", release.tag_name);
+    let tag = &release.tag_name;
+    if is_current(tag, current) && !force {
+        println!(
+            "{}",
+            tr!(
+                "EasyTab is up to date ({tag}).",
+                "EasyTab est à jour ({tag})."
+            )
+        );
         return Ok(());
     }
     let name = archive_name(target);
@@ -154,17 +181,28 @@ pub fn run(force: bool, installed_shells: &[&str]) -> Result<()> {
         .assets
         .iter()
         .find(|asset| asset.name == name)
-        .with_context(|| format!("{name} absent de la version {}", release.tag_name))?;
+        .with_context(|| {
+            tr!(
+                "{name} missing from version {tag}",
+                "{name} absent de la version {tag}"
+            )
+        })?;
 
     let dir = std::env::temp_dir().join(format!("easytab-update-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).with_context(|| format!("création de {}", dir.display()))?;
+    std::fs::create_dir_all(&dir).with_context(|| {
+        let dir = dir.display();
+        tr!("creating {dir}", "création de {dir}")
+    })?;
     let result = download_and_install(&dir, asset, token.as_deref(), target, installed_shells);
     let _ = std::fs::remove_dir_all(&dir);
     result?;
     println!(
-        "EasyTab mis à jour : {current} → {}. Rouvre tes terminaux pour l'utiliser.",
-        release.tag_name
+        "{}",
+        tr!(
+            "EasyTab updated: {current} → {tag}. Reopen your terminals to use it.",
+            "EasyTab mis à jour : {current} → {tag}. Rouvre tes terminaux pour l'utiliser."
+        )
     );
     Ok(())
 }
@@ -177,7 +215,8 @@ fn download_and_install(
     installed_shells: &[&str],
 ) -> Result<()> {
     let archive = dir.join(&asset.name);
-    println!("Téléchargement de {}", asset.name);
+    let name = &asset.name;
+    println!("{}", tr!("Downloading {name}", "Téléchargement de {name}"));
     // Lien direct d'abord ; dépôt privé : par l'API, avec un jeton.
     let direct = match token {
         Some(_) => None,
@@ -191,7 +230,7 @@ fn download_and_install(
             &asset.url,
             Some(&archive),
         )
-        .context("dépôt privé : connecte git à GitHub, ou définis GITHUB_TOKEN, puis relance")?;
+        .context(private_repo())?;
     }
     let status = Command::new(system_tool("tar"))
         .arg("-xf")
@@ -199,9 +238,12 @@ fn download_and_install(
         .arg("-C")
         .arg(dir)
         .status()
-        .context("tar introuvable")?;
+        .context(tr("tar not found", "tar introuvable"))?;
     if !status.success() {
-        bail!("décompression de {} impossible", asset.name);
+        bail!(tr!(
+            "cannot extract {name}",
+            "décompression de {name} impossible"
+        ));
     }
     let easytab = dir
         .join(format!("easytab-{target}"))
@@ -219,11 +261,15 @@ fn download_and_install(
         if let Some(shell) = shell {
             command.args(["--shell", shell]);
         }
-        let status = command
-            .status()
-            .with_context(|| format!("lancement de {}", easytab.display()))?;
+        let status = command.status().with_context(|| {
+            let easytab = easytab.display();
+            tr!("running {easytab}", "lancement de {easytab}")
+        })?;
         if !status.success() {
-            bail!("l'installation de la nouvelle version a échoué");
+            bail!(tr(
+                "installing the new version failed",
+                "l'installation de la nouvelle version a échoué"
+            ));
         }
     }
     Ok(())
