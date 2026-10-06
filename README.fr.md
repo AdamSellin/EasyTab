@@ -71,6 +71,8 @@ Ouvre ensuite un nouveau terminal. Pour mettre à jour : `easytab update`.
 | `easytab update` | Installe la dernière version |
 | `easytab uninstall` | Retire EasyTab du shell |
 
+Les messages sont en français si le système l'est, sinon en anglais (`EASYTAB_LANG=fr` pour forcer).
+
 Tout le reste (réglages, specs personnelles, compilation) est dans le [guide](docs/guide.md).
 
 ## Licence

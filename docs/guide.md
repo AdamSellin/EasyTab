@@ -61,6 +61,11 @@ enter_inserts = true  # false : Entrée lance toujours la commande, seul Tab ins
 
 Les variables `EASYTAB_OVERLAY` et `EASYTAB_ICONS` passent avant le fichier.
 
+Langue des messages (commande `easytab`, scripts d'installation, modèle de `config.toml`) :
+anglais par défaut, français si le système l'est (`LC_ALL`, `LC_MESSAGES` ou `LANG` commençant
+par `fr` ; sans ces variables, la langue de Windows ou de macOS). `EASYTAB_LANG=fr` ou
+`EASYTAB_LANG=en` force le choix.
+
 Désactiver : `EASYTAB_DISABLE=1` pour une session, `easytab uninstall` pour de bon.
 
 ## D'où viennent les suggestions

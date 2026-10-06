@@ -4,6 +4,9 @@
 #[path = "../../easytab-core/src/config.rs"]
 #[allow(dead_code)]
 mod config;
+// Langue des messages, partagée de la même façon.
+#[path = "../../easytab-core/src/lang.rs"]
+mod lang;
 mod rc;
 mod update;
 
@@ -12,9 +15,15 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
+use lang::tr;
 
+// Les textes d'aide sont des attributs plutôt que des commentaires `///`,
+// pour suivre la langue de l'utilisateur.
 #[derive(Parser)]
-#[command(version, about = "Autocomplétion graphique pour le terminal")]
+#[command(
+    version,
+    about = tr("Graphical autocomplete for the terminal", "Autocomplétion graphique pour le terminal")
+)]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -22,37 +31,59 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Affiche le script d'intégration d'un shell (utilisé par le fichier de config du shell)
+    #[command(about = tr(
+        "Print a shell's integration script (used by the shell's config file)",
+        "Affiche le script d'intégration d'un shell (utilisé par le fichier de config du shell)"
+    ))]
     Init { shell: Shell },
-    /// Active EasyTab dans le fichier de config du shell
+    #[command(about = tr(
+        "Enable EasyTab in the shell's config file",
+        "Active EasyTab dans le fichier de config du shell"
+    ))]
     Install {
-        /// Shell à configurer (par défaut : celui de $SHELL)
-        #[arg(long)]
+        #[arg(long, help = shell_help())]
         shell: Option<Shell>,
     },
-    /// Retire EasyTab du fichier de config du shell
+    #[command(about = tr(
+        "Remove EasyTab from the shell's config file",
+        "Retire EasyTab du fichier de config du shell"
+    ))]
     Uninstall {
-        /// Shell à configurer (par défaut : celui de $SHELL)
-        #[arg(long)]
+        #[arg(long, help = shell_help())]
         shell: Option<Shell>,
     },
-    /// Vérifie l'installation
+    #[command(about = tr("Check the installation", "Vérifie l'installation"))]
     Doctor,
-    /// Crée le fichier de réglages s'il n'existe pas, et affiche son chemin
+    #[command(about = tr(
+        "Create the settings file if it does not exist, and print its path",
+        "Crée le fichier de réglages s'il n'existe pas, et affiche son chemin"
+    ))]
     Config,
-    /// Installe la dernière version publiée
+    #[command(about = tr("Install the latest published version", "Installe la dernière version publiée"))]
     Update {
-        /// Réinstalle même si la version est déjà la dernière
-        #[arg(long)]
+        #[arg(long, help = tr(
+            "Reinstall even if the version is already the latest",
+            "Réinstalle même si la version est déjà la dernière"
+        ))]
         force: bool,
     },
+}
+
+fn shell_help() -> &'static str {
+    tr(
+        "Shell to configure (default: the one in $SHELL)",
+        "Shell à configurer (par défaut : celui de $SHELL)",
+    )
 }
 
 #[derive(Clone, Copy, ValueEnum)]
 enum Shell {
     Zsh,
     Bash,
-    /// PowerShell 7 (`pwsh`) et Windows PowerShell 5.
+    #[value(help = tr(
+        "PowerShell 7 (`pwsh`) and Windows PowerShell 5",
+        "PowerShell 7 (`pwsh`) et Windows PowerShell 5"
+    ))]
     Pwsh,
 }
 
@@ -94,7 +125,7 @@ impl Shell {
     /// Fichiers de config du shell. PowerShell : profils de PowerShell 7 et de
     /// Windows PowerShell (le dossier Documents peut être dans OneDrive).
     fn rc_files(self) -> Result<Vec<PathBuf>> {
-        let home = dirs::home_dir().context("dossier personnel introuvable")?;
+        let home = dirs::home_dir().context(home_not_found())?;
         Ok(match self {
             Shell::Zsh => vec![std::env::var_os("ZDOTDIR")
                 .map(PathBuf::from)
@@ -124,9 +155,10 @@ impl Shell {
         match Shell::ALL.into_iter().find(|s| s.name() == name) {
             Some(shell) => Ok(shell),
             None => {
-                bail!(
+                bail!(tr!(
+                    "unsupported shell ({shell:?}); pass --shell zsh, --shell bash or --shell pwsh",
                     "shell non pris en charge ({shell:?}) ; précise --shell zsh, --shell bash ou --shell pwsh"
-                )
+                ))
             }
         }
     }
@@ -175,43 +207,76 @@ fn install(shell: Shell) -> Result<()> {
             &path,
             &rc::add_blocks(&rc::remove_blocks(&content), &line),
         )?;
+        let path = short(&path);
         println!(
-            "EasyTab est {} dans {}",
-            if updated { "mis à jour" } else { "installé" },
-            short(&path)
+            "{}",
+            if updated {
+                tr!(
+                    "EasyTab updated in {path}",
+                    "EasyTab est mis à jour dans {path}"
+                )
+            } else {
+                tr!(
+                    "EasyTab installed in {path}",
+                    "EasyTab est installé dans {path}"
+                )
+            }
         );
     }
+    let dir = short(exe.parent().unwrap_or(&exe));
     println!(
-        "Programmes dans {}. Ouvre un nouveau terminal pour activer EasyTab.",
-        short(exe.parent().unwrap_or(&exe))
+        "{}",
+        tr!(
+            "Programs in {dir}. Open a new terminal to enable EasyTab.",
+            "Programmes dans {dir}. Ouvre un nouveau terminal pour activer EasyTab."
+        )
     );
     Ok(())
+}
+
+fn home_not_found() -> &'static str {
+    tr("home directory not found", "dossier personnel introuvable")
+}
+
+/// Contexte d'erreur « création de <dossier> ».
+fn creating(path: &Path) -> String {
+    let path = path.display();
+    tr!("creating {path}", "création de {path}")
+}
+
+/// Contexte d'erreur « écriture de <fichier> ».
+fn writing(path: &Path) -> String {
+    let path = path.display();
+    tr!("writing {path}", "écriture de {path}")
 }
 
 /// Dossier où `install` copie les programmes : le fichier de config du shell
 /// pointe vers lui plutôt que vers le dossier de compilation.
 fn install_dir() -> Result<PathBuf> {
-    let home = dirs::home_dir().context("dossier personnel introuvable")?;
+    let home = dirs::home_dir().context(home_not_found())?;
     Ok(home.join(".easytab").join("bin"))
 }
 
 /// Copie `easytab` et `easytab-term` dans [`install_dir`] ; renvoie le chemin
 /// de `easytab` installé.
 fn copy_binaries() -> Result<PathBuf> {
-    let exe = std::env::current_exe().context("chemin de easytab introuvable")?;
+    let exe = std::env::current_exe().context(tr(
+        "path of easytab not found",
+        "chemin de easytab introuvable",
+    ))?;
     let dir = install_dir()?;
     if exe.parent() == Some(dir.as_path()) {
         return Ok(exe);
     }
     let term = term_binary();
     if !term.is_file() {
-        bail!(
-            "{} introuvable à côté de {} : compile tout le projet (cargo build --release)",
-            term.display(),
-            exe.display()
-        );
+        let (term, exe) = (term.display(), exe.display());
+        bail!(tr!(
+            "{term} not found next to {exe}: build the whole project (cargo build --release)",
+            "{term} introuvable à côté de {exe} : compile tout le projet (cargo build --release)"
+        ));
     }
-    fs::create_dir_all(&dir).with_context(|| format!("création de {}", dir.display()))?;
+    fs::create_dir_all(&dir).with_context(|| creating(&dir))?;
     remove_old_copies(&dir);
     // Fenêtre flottante : facultative, la liste peut toujours être
     // dessinée dans le terminal.
@@ -221,14 +286,16 @@ fn copy_binaries() -> Result<PathBuf> {
         if !source.is_file() {
             continue;
         }
-        let name = source.file_name().context("nom de programme invalide")?;
+        let name = source
+            .file_name()
+            .context(tr("invalid program name", "nom de programme invalide"))?;
         let target = dir.join(name);
         replace_file(source, &target)?;
         if source == &exe {
             installed = Some(target);
         }
     }
-    installed.context("copie de easytab")
+    installed.context(tr("copying easytab", "copie de easytab"))
 }
 
 /// Remplace `target` par une copie de `source`. Sous Windows, un programme en
@@ -238,11 +305,18 @@ fn replace_file(source: &Path, target: &Path) -> Result<()> {
     if target.exists() && fs::remove_file(target).is_err() {
         let mut aside = target.as_os_str().to_owned();
         aside.push(format!(".old-{}", std::process::id()));
-        fs::rename(target, &aside)
-            .with_context(|| format!("{} est verrouillé", target.display()))?;
+        fs::rename(target, &aside).with_context(|| {
+            let target = target.display();
+            tr!("{target} is locked", "{target} est verrouillé")
+        })?;
     }
-    fs::copy(source, target)
-        .with_context(|| format!("copie de {} vers {}", source.display(), target.display()))?;
+    fs::copy(source, target).with_context(|| {
+        let (source, target) = (source.display(), target.display());
+        tr!(
+            "copying {source} to {target}",
+            "copie de {source} vers {target}"
+        )
+    })?;
     Ok(())
 }
 
@@ -261,12 +335,25 @@ fn remove_old_copies(dir: &Path) {
 fn uninstall(shell: Shell) -> Result<()> {
     for path in shell.rc_files()? {
         let content = read_or_empty(&path)?;
+        let short_path = short(&path);
         if !rc::has_block(&content) {
-            println!("EasyTab n'est pas installé dans {}", short(&path));
+            println!(
+                "{}",
+                tr!(
+                    "EasyTab is not installed in {short_path}",
+                    "EasyTab n'est pas installé dans {short_path}"
+                )
+            );
             continue;
         }
         write_config(shell, &path, &rc::remove_blocks(&content))?;
-        println!("EasyTab est retiré de {}", short(&path));
+        println!(
+            "{}",
+            tr!(
+                "EasyTab removed from {short_path}",
+                "EasyTab est retiré de {short_path}"
+            )
+        );
     }
     Ok(())
 }
@@ -281,20 +368,27 @@ fn doctor() -> Result<()> {
         .unwrap_or_else(term_binary);
     let term_found = term.is_file() || which(&term).is_some();
     println!(
-        "{} wrapper easytab-term : {}",
+        "{} wrapper easytab-term{}{}",
         mark(term_found),
+        colon(),
         short(&term)
     );
     if cfg!(any(windows, target_os = "macos", target_os = "linux")) {
         let overlay =
             term.with_file_name(format!("easytab-overlay{}", std::env::consts::EXE_SUFFIX));
         println!(
-            "{} fenêtre flottante : {}",
+            "{} {}{}{}",
             mark(overlay.is_file()),
+            tr("floating window", "fenêtre flottante"),
+            colon(),
             if overlay.is_file() {
                 short(&overlay)
             } else {
-                "absente, la liste s'affiche dans le terminal".to_string()
+                tr(
+                    "missing, the list is drawn in the terminal",
+                    "absente, la liste s'affiche dans le terminal",
+                )
+                .to_string()
             }
         );
     }
@@ -305,26 +399,46 @@ fn doctor() -> Result<()> {
                 installed_in.push(short(&path));
             }
         }
+        let name = shell.name();
         println!(
-            "{} {} : {}",
+            "{} {name}{}{}",
             mark(!installed_in.is_empty()),
-            shell.name(),
+            colon(),
             if installed_in.is_empty() {
-                format!("non installé (easytab install --shell {})", shell.name())
+                tr!(
+                    "not installed (easytab install --shell {name})",
+                    "non installé (easytab install --shell {name})"
+                )
             } else {
-                format!("installé dans {}", installed_in.join(", "))
+                let files = installed_in.join(", ");
+                tr!("installed in {files}", "installé dans {files}")
             }
         );
     }
     if let Some(path) = config::Config::path() {
         let (ok, status) = config_status(&path);
-        println!("{} réglages : {status}", mark(ok));
+        println!(
+            "{} {}{}{status}",
+            mark(ok),
+            tr("settings", "réglages"),
+            colon()
+        );
     }
     let active = std::env::var_os("EASYTAB_TERM").is_some();
     println!(
-        "{} ce terminal {} sous EasyTab",
+        "{} {}",
         mark(active),
-        if active { "tourne" } else { "ne tourne pas" }
+        if active {
+            tr(
+                "this terminal runs under EasyTab",
+                "ce terminal tourne sous EasyTab",
+            )
+        } else {
+            tr(
+                "this terminal does not run under EasyTab",
+                "ce terminal ne tourne pas sous EasyTab",
+            )
+        }
     );
     Ok(())
 }
@@ -335,32 +449,51 @@ fn config_status(path: &Path) -> (bool, String) {
         Ok(Some(_)) => (true, short(path)),
         Ok(None) => (
             true,
-            "par défaut (easytab config pour les changer)".to_string(),
+            tr(
+                "defaults (easytab config to change them)",
+                "par défaut (easytab config pour les changer)",
+            )
+            .to_string(),
         ),
-        Err(error) => (
-            false,
-            format!(
-                "{} est invalide, réglages par défaut utilisés :\n     {}",
-                short(path),
-                error.trim().replace('\n', "\n     ")
-            ),
-        ),
+        Err(error) => {
+            let path = short(path);
+            let error = error.trim().replace('\n', "\n     ");
+            (
+                false,
+                tr!(
+                    "{path} is invalid, default settings used:\n     {error}",
+                    "{path} est invalide, réglages par défaut utilisés :\n     {error}"
+                ),
+            )
+        }
     }
 }
 
 /// `easytab config` : crée `~/.easytab/config.toml` avec chaque réglage
 /// commenté, puis dit où il est.
 fn edit_config() -> Result<()> {
-    let path = config::Config::path().context("dossier personnel introuvable")?;
+    let path = config::Config::path().context(home_not_found())?;
+    let short_path = short(&path);
     if !path.exists() {
         if let Some(dir) = path.parent() {
-            fs::create_dir_all(dir).with_context(|| format!("création de {}", dir.display()))?;
+            fs::create_dir_all(dir).with_context(|| creating(dir))?;
         }
-        fs::write(&path, config::TEMPLATE)
-            .with_context(|| format!("écriture de {}", path.display()))?;
-        println!("Fichier de réglages créé : {}", short(&path));
+        fs::write(&path, config::template()).with_context(|| writing(&path))?;
+        println!(
+            "{}",
+            tr!(
+                "Settings file created: {short_path}",
+                "Fichier de réglages créé : {short_path}"
+            )
+        );
     } else {
-        println!("Fichier de réglages : {}", short(&path));
+        println!(
+            "{}",
+            tr!(
+                "Settings file: {short_path}",
+                "Fichier de réglages : {short_path}"
+            )
+        );
     }
     let (ok, status) = config_status(&path);
     if !ok {
@@ -371,9 +504,13 @@ fn edit_config() -> Result<()> {
     } else {
         "${EDITOR:-nano}"
     };
+    let path = path.display();
     println!(
-        "Modifiez-le ({editor} \"{}\"), puis rouvrez vos terminaux.",
-        path.display()
+        "{}",
+        tr!(
+            "Edit it ({editor} \"{path}\"), then reopen your terminals.",
+            "Modifiez-le ({editor} \"{path}\"), puis rouvrez vos terminaux."
+        )
     );
     Ok(())
 }
@@ -399,7 +536,10 @@ fn read_or_empty(path: &Path) -> Result<String> {
         // Les profils PowerShell commencent souvent par un BOM UTF-8.
         Ok(content) => Ok(content.trim_start_matches('\u{feff}').to_string()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
-        Err(e) => Err(e).with_context(|| format!("lecture de {}", path.display())),
+        Err(e) => Err(e).with_context(|| {
+            let path = path.display();
+            tr!("reading {path}", "lecture de {path}")
+        }),
     }
 }
 
@@ -407,13 +547,18 @@ fn read_or_empty(path: &Path) -> Result<String> {
 /// sans lui, Windows PowerShell 5 les lit comme de l'ANSI.
 fn write_config(shell: Shell, path: &Path, content: &str) -> Result<()> {
     if let Some(dir) = path.parent() {
-        fs::create_dir_all(dir).with_context(|| format!("création de {}", dir.display()))?;
+        fs::create_dir_all(dir).with_context(|| creating(dir))?;
     }
     let content = match shell {
         Shell::Pwsh if !content.is_empty() => format!("\u{feff}{content}"),
         _ => content.to_string(),
     };
-    fs::write(path, content).with_context(|| format!("écriture de {}", path.display()))
+    fs::write(path, content).with_context(|| writing(path))
+}
+
+/// Deux-points, précédé d'une espace en français.
+fn colon() -> &'static str {
+    tr(": ", " : ")
 }
 
 fn mark(ok: bool) -> &'static str {

@@ -6,8 +6,45 @@ use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
-/// Fichier créé par `easytab config`, avec chaque réglage commenté.
-pub const TEMPLATE: &str = r#"# Réglages d'EasyTab. Retirez le « # » devant une ligne pour la changer.
+/// Fichier créé par `easytab config`, avec chaque réglage commenté, dans la
+/// langue de l'utilisateur.
+pub fn template() -> &'static str {
+    crate::lang::tr(TEMPLATE, TEMPLATE_FR)
+}
+
+/// Modèle en anglais.
+pub const TEMPLATE: &str = r##"# EasyTab settings. Remove the "#" in front of a line to change it.
+# Terminals that are already open keep the old settings: reopen them.
+
+[list]
+# Number of suggestions visible before scrolling (3 to 20).
+# rows = 8
+
+# Fig-style floating window (true) or list drawn inside the terminal (false).
+# overlay = true
+
+# Theme: "dark" or "light".
+# theme = "dark"
+
+# Icons of the list drawn in the terminal: "badges" or "emoji".
+# icons = "badges"
+
+# Suggest commands typed before (shell history).
+# history = true
+
+# Commands without a spec: read their options from "command --help"
+# (run once in the background, answer kept in ~/.easytab/cache).
+# help = true
+
+[keys]
+# Enter inserts the highlighted suggestion when it completes the typed word
+# or was picked with Up/Down (true), or always runs the command, only Tab
+# inserting (false).
+# enter_inserts = true
+"##;
+
+/// Modèle en français.
+pub const TEMPLATE_FR: &str = r#"# Réglages d'EasyTab. Retirez le « # » devant une ligne pour la changer.
 # Les terminaux déjà ouverts gardent les anciens réglages : rouvrez-les.
 
 [list]
@@ -161,18 +198,21 @@ mod tests {
 
     #[test]
     fn template_is_valid_and_matches_defaults() {
-        assert_eq!(Config::parse(TEMPLATE).unwrap(), Config::default());
-        // Tous les réglages décommentés : toujours valide.
-        let uncommented = TEMPLATE
-            .replace("# rows", "rows")
-            .replace("# overlay", "overlay");
-        let uncommented = uncommented
-            .replace("# theme", "theme")
-            .replace("# icons", "icons")
-            .replace("# history", "history")
-            .replace("# help", "help")
-            .replace("# enter_inserts", "enter_inserts");
-        assert_eq!(Config::parse(&uncommented).unwrap(), Config::default());
+        for template in [TEMPLATE, TEMPLATE_FR] {
+            assert_eq!(Config::parse(template).unwrap(), Config::default());
+            // Tous les réglages décommentés : toujours valide.
+            let uncommented = template
+                .replace("# rows", "rows")
+                .replace("# overlay", "overlay");
+            let uncommented = uncommented
+                .replace("# theme", "theme")
+                .replace("# icons", "icons")
+                .replace("# history", "history")
+                .replace("# help", "help")
+                .replace("# enter_inserts", "enter_inserts");
+            assert_eq!(Config::parse(&uncommented).unwrap(), Config::default());
+        }
+        assert!(template() == TEMPLATE || template() == TEMPLATE_FR);
     }
 
     #[test]

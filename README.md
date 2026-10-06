@@ -70,6 +70,8 @@ Then open a new terminal. To update: `easytab update`.
 | `easytab update` | Installs the latest version |
 | `easytab uninstall` | Removes EasyTab from the shell |
 
+Messages are in English, or in French if your system is (`EASYTAB_LANG=en` to force English).
+
 Everything else (settings, custom specs, building from source) is in the
 [guide](docs/guide.md) (in French for now).
 

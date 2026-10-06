@@ -4,12 +4,21 @@
 #   powershell -ExecutionPolicy Bypass -File scripts\install.ps1
 # Le script se sert alors des identifiants GitHub de git (ou de
 # $env:GITHUB_TOKEN, ou de gh).
-# Variables : $env:EASYTAB_VERSION (ex. v0.2.0, défaut : la dernière).
+# Variables : $env:EASYTAB_VERSION (ex. v0.2.0, défaut : la dernière),
+# $env:EASYTAB_LANG (fr ou en, par defaut : langue de Windows).
 $ErrorActionPreference = 'Stop'
 # Le fichier reste en ASCII : Windows PowerShell 5.1 lit les scripts sans BOM
 # comme de l'ANSI, et `irm | iex` ne supporte pas de BOM. Les lettres
 # accentuées des messages sont donc écrites par leur code.
 $e = [char]0xE9; $a = [char]0xE0
+# Messages en anglais, ou en francais si Windows l'est ($env:EASYTAB_LANG
+# passe avant, comme pour easytab lui-meme).
+if ($env:EASYTAB_LANG) {
+    $fr = $env:EASYTAB_LANG -like 'fr*'
+} else {
+    $fr = (Get-UICulture).TwoLetterISOLanguageName -eq 'fr'
+}
+function Tr($en, $french) { if ($fr) { $french } else { $en } }
 # Windows PowerShell 5.1 n'active pas TLS 1.2 par défaut.
 [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 
@@ -57,19 +66,23 @@ $tmp = Join-Path ([IO.Path]::GetTempPath()) ("easytab-" + [Guid]::NewGuid())
 New-Item -ItemType Directory $tmp | Out-Null
 try {
     $zip = "$tmp\easytab.zip"
-    Write-Host "T${e}l${e}chargement de $url"
+    Write-Host (Tr "Downloading $url" "T${e}l${e}chargement de $url")
     try {
         Invoke-WebRequest $url -OutFile $zip -UseBasicParsing
     } catch {
-        Write-Host "Lien direct indisponible (d${e}p$([char]0xF4)t priv${e} ?), t${e}l${e}chargement avec tes identifiants GitHub"
+        Write-Host (Tr "Direct link unavailable (private repository?), downloading with your GitHub credentials" `
+            "Lien direct indisponible (d${e}p$([char]0xF4)t priv${e} ?), t${e}l${e}chargement avec tes identifiants GitHub")
         if (-not (Get-PrivateAsset $zip)) {
             if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
-                throw "T${e}l${e}chargement impossible. D${e}p$([char]0xF4)t priv${e} : connecte git $a GitHub, ou d${e}finis `$env:GITHUB_TOKEN."
+                throw (Tr "Download failed. Private repository: connect git to GitHub, or set `$env:GITHUB_TOKEN." `
+                    "T${e}l${e}chargement impossible. D${e}p$([char]0xF4)t priv${e} : connecte git $a GitHub, ou d${e}finis `$env:GITHUB_TOKEN.")
             }
             $tag = @()
             if ($env:EASYTAB_VERSION) { $tag = @($env:EASYTAB_VERSION) }
             & gh release download @tag -R $repo -p $asset -O $zip
-            if ($LASTEXITCODE -ne 0) { throw "gh release download a ${e}chou${e} ($LASTEXITCODE)." }
+            if ($LASTEXITCODE -ne 0) {
+                throw (Tr "gh release download failed ($LASTEXITCODE)." "gh release download a ${e}chou${e} ($LASTEXITCODE).")
+            }
         }
     }
     Expand-Archive $zip -DestinationPath $tmp
