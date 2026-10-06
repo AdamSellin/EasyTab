@@ -205,6 +205,16 @@ pub fn builtin() -> Vec<Spec> {
     bundle.specs.into_iter().map(Spec::from).collect()
 }
 
+/// Specs des outils de Windows absents des specs Fig (`winget`, `robocopy`,
+/// `taskkill`…), écrites à la main dans `specs/windows.json`. Leurs options
+/// s'écrivent souvent `/MIR` ou `/LOG:fichier` (voir `complete.rs`).
+pub fn windows() -> Vec<Spec> {
+    let bundle: Bundle<Vec<Command>> =
+        serde_json::from_str(include_str!("../../../specs/windows.json"))
+            .expect("specs/windows.json invalide");
+    bundle.specs.into_iter().map(Spec::from).collect()
+}
+
 /// Specs embarquées que d'autres chargent par `loadSpec`, par chemin
 /// (`specs/loadable.json.z`). Décompressées seulement au premier `loadSpec`.
 pub fn loadable() -> HashMap<String, Spec> {

@@ -5,7 +5,7 @@
 //! `~/.easytab/cache/powershell.json` : PowerShell met plusieurs centaines de
 //! millisecondes à démarrer, la frappe ne l'attend jamais.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -24,9 +24,11 @@ const LIST_TIMEOUT: Duration = Duration::from_secs(90);
 /// La liste des commandes est redemandée au-delà (modules installés depuis).
 const COMMANDS_FRESH_FOR: Duration = Duration::from_secs(24 * 3600);
 
-/// Liste des commandes : nom et type (`Cmdlet`, `Function`, `Alias`…).
+/// Liste des commandes : nom, type (`Cmdlet`, `Function`, `Alias`…) et, pour
+/// un alias, la commande qu'il désigne.
 const LIST_SCRIPT: &str = "Get-Command -CommandType Cmdlet,Function,Alias \
-     | ForEach-Object { @{ n = $_.Name; t = [string]$_.CommandType } } \
+     | ForEach-Object { @{ n = $_.Name; t = [string]$_.CommandType; \
+     r = [string]$(if ($_.CommandType -eq 'Alias') { $_.Definition }) } } \
      | ConvertTo-Json -Compress";
 
 /// Paramètres d'une commande (`{name}` est remplacé, après vérification).
@@ -62,12 +64,22 @@ struct Listed {
     name: String,
     #[serde(rename = "t", default)]
     kind: String,
+    /// Commande désignée par un alias. Toute valeur est acceptée : sans
+    /// `[string]`, Windows PowerShell 5.1 écrit `{}` pour une commande qui
+    /// n'est pas un alias, et la liste entière serait illisible.
+    #[serde(rename = "r", default)]
+    target: serde_json::Value,
 }
 
 /// Ce qui est gardé sur disque.
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct Cache {
     commands: Vec<String>,
+    /// Alias (`ls`, `gci`) et la commande qu'ils désignent (`Get-ChildItem`).
+    /// Absent d'un cache écrit avant leur prise en charge : la liste est
+    /// alors redemandée.
+    #[serde(default)]
+    aliases: Option<BTreeMap<String, String>>,
     /// Date de la liste, en secondes depuis 1970.
     listed_at: u64,
     /// Paramètres par nom de commande en minuscules.
@@ -77,12 +89,31 @@ struct Cache {
 #[derive(Default)]
 struct State {
     cache: Cache,
-    /// Commandes connues, en minuscules.
+    /// Commandes connues (alias compris), en minuscules.
     known: HashSet<String>,
+    /// Commande désignée par chaque alias, par alias en minuscules.
+    targets: HashMap<String, String>,
     /// Specs déjà construites (une par commande utilisée, gardées jusqu'à la
     /// fin du programme).
     specs: HashMap<String, &'static Command>,
     running: HashSet<String>,
+}
+
+impl State {
+    /// Recalcule les commandes connues et les cibles des alias.
+    fn index(&mut self) {
+        let aliases = self.cache.aliases.iter().flatten();
+        self.targets = aliases
+            .map(|(alias, target)| (alias.to_lowercase(), target.clone()))
+            .collect();
+        self.known = self
+            .cache
+            .commands
+            .iter()
+            .map(|c| c.to_lowercase())
+            .chain(self.targets.keys().cloned())
+            .collect();
+    }
 }
 
 #[derive(Clone)]
@@ -116,11 +147,12 @@ impl PowerShell {
             state: Arc::new(Mutex::new(State::default())),
             notify: Arc::new(notify),
         };
-        let stale = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .map_or(true, |now| {
-                now.as_secs().saturating_sub(cache.listed_at) > COMMANDS_FRESH_FOR.as_secs()
-            });
+        let stale = cache.aliases.is_none()
+            || SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .map_or(true, |now| {
+                    now.as_secs().saturating_sub(cache.listed_at) > COMMANDS_FRESH_FOR.as_secs()
+                });
         shell.set_cache(cache);
         if stale {
             shell.fetch("", Job::List);
@@ -128,15 +160,59 @@ impl PowerShell {
         shell
     }
 
-    fn set_cache(&self, cache: Cache) {
-        let mut state = self.state.lock().unwrap();
-        state.known = cache.commands.iter().map(|c| c.to_lowercase()).collect();
-        state.cache = cache;
+    /// PowerShell déjà interrogé : `list` est la réponse de [`LIST_SCRIPT`],
+    /// `params` celles de [`PARAMS_SCRIPT`] par commande.
+    #[cfg(test)]
+    pub(crate) fn answered(list: &str, params: &[(&str, &str)]) -> Self {
+        let (commands, aliases) = parse_list(list).unwrap();
+        let params = params
+            .iter()
+            .map(|(name, json)| (name.to_lowercase(), parse_params(json).unwrap()))
+            .collect();
+        let shell = Self {
+            program: String::new(),
+            cache_file: None,
+            state: Arc::default(),
+            notify: Arc::new(|| {}),
+        };
+        shell.set_cache(Cache {
+            commands,
+            aliases: Some(aliases),
+            listed_at: u64::MAX,
+            params,
+        });
+        shell
     }
 
-    /// Noms des commandes PowerShell connues.
-    pub fn commands(&self) -> Vec<String> {
-        self.state.lock().unwrap().cache.commands.clone()
+    fn set_cache(&self, cache: Cache) {
+        let mut state = self.state.lock().unwrap();
+        state.cache = cache;
+        state.index();
+    }
+
+    /// Commandes PowerShell connues, avec, pour un alias, la commande qu'il
+    /// désigne (`ls` → `Get-ChildItem`).
+    pub fn commands(&self) -> Vec<(String, Option<String>)> {
+        let state = self.state.lock().unwrap();
+        let commands = state.cache.commands.iter().map(|c| (c.clone(), None));
+        let aliases = state
+            .cache
+            .aliases
+            .iter()
+            .flatten()
+            .map(|(alias, target)| (alias.clone(), Some(target.clone())));
+        commands.chain(aliases).collect()
+    }
+
+    /// Commande désignée par l'alias `name` (`gci` → `Get-ChildItem`).
+    pub fn alias_target(&self, name: &str) -> Option<String> {
+        let state = self.state.lock().unwrap();
+        state.targets.get(&name.to_lowercase()).cloned()
+    }
+
+    /// Alias connus, en minuscules.
+    pub fn aliases(&self) -> HashSet<String> {
+        self.state.lock().unwrap().targets.keys().cloned().collect()
     }
 
     /// Spec de la commande PowerShell `name`, construite à partir de ses
@@ -158,9 +234,16 @@ impl PowerShell {
         if !known && (listed || !is_verb_noun(name)) {
             return None;
         }
-        let Some(params) = state.cache.params.get(&key) else {
+        // Un alias reçoit les paramètres de sa commande (`ls -Recurse`),
+        // demandés une seule fois pour les deux.
+        let target = state.targets.get(&key).cloned();
+        let target = target.as_deref().unwrap_or(name);
+        if !valid_name(target) {
+            return None;
+        }
+        let Some(params) = state.cache.params.get(&target.to_lowercase()) else {
             drop(state);
-            self.fetch(name, Job::Params);
+            self.fetch(target, Job::Params);
             return None;
         };
         // Pas une commande PowerShell (ou sans paramètre) : rien à proposer.
@@ -207,11 +290,12 @@ impl PowerShell {
                 state.running.remove(&id);
                 match job {
                     Job::List => {
-                        let Some(commands) = parse_list(&output.stdout) else {
+                        let Some((commands, aliases)) = parse_list(&output.stdout) else {
                             return;
                         };
-                        state.known = commands.iter().map(|c| c.to_lowercase()).collect();
                         state.cache.commands = commands;
+                        state.cache.aliases = Some(aliases);
+                        state.index();
                         state.cache.listed_at = SystemTime::now()
                             .duration_since(SystemTime::UNIX_EPOCH)
                             .map_or(0, |d| d.as_secs());
@@ -291,18 +375,24 @@ fn one_or_many<T: for<'de> Deserialize<'de>>(json: &str) -> Option<Vec<T>> {
         .or_else(|| serde_json::from_str::<T>(json).ok().map(|one| vec![one]))
 }
 
-fn parse_list(json: &str) -> Option<Vec<String>> {
+/// Commandes, puis alias avec la commande qu'ils désignent. Les alias faits
+/// de symboles (`%`, `?`) sont écartés.
+fn parse_list(json: &str) -> Option<(Vec<String>, BTreeMap<String, String>)> {
     let listed: Vec<Listed> = one_or_many(json)?;
-    let mut names: Vec<String> = listed
-        .into_iter()
-        // Les alias d'une lettre (`%`, `?`) et ceux qui imitent Unix (`ls`,
-        // `rm`) sont déjà couverts par les specs ou n'aident pas.
-        .filter(|c| c.kind != "Alias" || c.name.contains('-'))
-        .map(|c| c.name)
-        .collect();
+    let mut names = Vec::new();
+    let mut aliases = BTreeMap::new();
+    for command in listed {
+        if command.kind != "Alias" {
+            names.push(command.name);
+        } else if let Some(target) = command.target.as_str().filter(|t| !t.is_empty()) {
+            if valid_name(&command.name) {
+                aliases.insert(command.name, target.to_string());
+            }
+        }
+    }
     names.sort_by_key(|n| n.to_lowercase());
     names.dedup();
-    Some(names)
+    Some((names, aliases))
 }
 
 fn parse_params(json: &str) -> Option<Vec<Param>> {
@@ -380,17 +470,54 @@ mod tests {
 
     #[test]
     fn reads_the_command_list() {
-        let list = parse_list(
-            r#"[{"n":"Remove-Item","t":"Cmdlet"},{"n":"ls","t":"Alias"},
-                {"n":"Get-ChildItem","t":"Cmdlet"},{"n":"Set-Location","t":"Cmdlet"}]"#,
+        let (list, aliases) = parse_list(
+            r#"[{"n":"Remove-Item","t":"Cmdlet","r":null},{"n":"ls","t":"Alias","r":"Get-ChildItem"},
+                {"n":"Get-ChildItem","t":"Cmdlet"},{"n":"Set-Location","t":"Cmdlet"},
+                {"n":"cd","t":"Alias","r":"Set-Location"},{"n":"?","t":"Alias","r":"Where-Object"},
+                {"n":"vide","t":"Alias"},{"n":"Get-Date","t":"Function","r":{}},
+                {"n":"bizarre","t":"Alias","r":{}}]"#,
         )
         .unwrap();
-        assert_eq!(list, ["Get-ChildItem", "Remove-Item", "Set-Location"]);
+        // `{}` : ce qu'écrit Windows PowerShell 5.1 pour « pas d'alias ».
+        assert_eq!(
+            list,
+            ["Get-ChildItem", "Get-Date", "Remove-Item", "Set-Location"]
+        );
+        let aliases: Vec<_> = aliases
+            .iter()
+            .map(|(a, t)| (a.as_str(), t.as_str()))
+            .collect();
+        assert_eq!(aliases, [("cd", "Set-Location"), ("ls", "Get-ChildItem")]);
         // Une seule commande : ConvertTo-Json ne fait pas de tableau.
         assert_eq!(
-            parse_list(r#"{"n":"Get-Date","t":"Cmdlet"}"#).unwrap(),
+            parse_list(r#"{"n":"Get-Date","t":"Cmdlet"}"#).unwrap().0,
             ["Get-Date"]
         );
+    }
+
+    #[test]
+    fn aliases_share_their_command_parameters() {
+        let shell = PowerShell::answered(
+            r#"[{"n":"Get-Content","t":"Cmdlet"},{"n":"cat","t":"Alias","r":"Get-Content"},
+                {"n":"gc","t":"Alias","r":"Get-Content"}]"#,
+            &[(
+                "Get-Content",
+                r#"[{"n":"Path","a":[],"s":false,"t":"String[]","v":[]}]"#,
+            )],
+        );
+        assert_eq!(shell.alias_target("GC").as_deref(), Some("Get-Content"));
+        assert_eq!(shell.alias_target("Get-Content"), None);
+        let spec = shell.spec("cat").unwrap();
+        assert_eq!(spec.names, ["cat"]);
+        assert_eq!(spec.options[0].names, ["-Path"]);
+        assert!(shell.spec("gc").is_some());
+        let commands = shell.commands();
+        assert!(commands.contains(&("gc".to_string(), Some("Get-Content".to_string()))));
+        assert!(commands.contains(&("Get-Content".to_string(), None)));
+        // Un cache d'avant les alias est redemandé.
+        let old: Cache =
+            serde_json::from_str(r#"{"commands":[],"listed_at":0,"params":{}}"#).unwrap();
+        assert!(old.aliases.is_none());
     }
 
     #[test]

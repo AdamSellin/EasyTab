@@ -76,6 +76,13 @@ Désactiver : `EASYTAB_DISABLE=1` pour une session, `easytab uninstall` pour de 
 les specs de [withfig/autocomplete](https://github.com/withfig/autocomplete), embarquées dans
 EasyTab (voir [specs/README.md](../specs/README.md)).
 
+**Outils de Windows.** Sous Windows, `specs/windows.json` décrit les outils absents des specs
+Fig : winget, wsl, choco, scoop, ipconfig, netsh, robocopy, taskkill, tasklist, sc, dism, sfc,
+where, findstr, xcopy, icacls, schtasks, shutdown, systeminfo, nslookup, ping, tracert et net.
+Elles passent avant celles de Fig (dont `ping` et `where` décrivent les versions Unix). Les
+options en `/` sont complétées sans tenir compte de la casse (`/mir` vaut `/MIR`), avec leur
+valeur collée (`/LOG:journal.txt`, `/FeatureName:…`).
+
 **Historique.** Les commandes déjà tapées qui prolongent la ligne en cours passent
 en tête (`docker-compose u` → `docker-compose up -d --build`, icône d'horloge), tirées de
 l'historique du shell (`~/.bash_history`, `~/.zsh_history`, historique PSReadLine de PowerShell).
@@ -118,7 +125,10 @@ Les fichiers sont relus quand ils changent. Les services de `docker compose` vie
 Fig.
 
 **PowerShell.** Les commandes PowerShell (`Get-ChildItem`…) et leurs paramètres viennent de
-PowerShell lui-même (`Get-Command`), lancé une fois en arrière-plan.
+PowerShell lui-même (`Get-Command`), lancé une fois en arrière-plan. Les alias (`ls`, `gci`,
+`cat`…) sont proposés avec la commande qu'ils désignent et en reçoivent les paramètres
+(`ls -Recurse`) : dans PowerShell, `ls` est `Get-ChildItem`, pas le `ls` d'Unix. Un alias vers
+un programme (`g` → `git`) reçoit sa spec.
 
 **`--help`.** Pour une commande installée qui n'a pas de spec, EasyTab lance une fois
 `commande --help` en arrière-plan (3 secondes au plus, depuis le dossier temporaire) et en tire
@@ -219,7 +229,7 @@ cargo test
 | `crates/easytab-overlay` | Fenêtre flottante, placée sous le curseur du terminal. |
 | `crates/easytab-cli` | Commande `easytab` : `install`, `uninstall`, `update`, `config`, `doctor`, `init`. |
 | `shell-integration/` | Scripts zsh, bash et PowerShell qui relancent le shell sous `easytab-term` et émettent les marqueurs de prompt. |
-| `specs/` | Specs de complétion importées de Fig. |
+| `specs/` | Specs de complétion importées de Fig, et celles des outils de Windows (`windows.json`). |
 | `tools/` | Script d'import des specs Fig. |
 
 L'architecture et ses choix sont décrits dans [architecture.md](architecture.md).
