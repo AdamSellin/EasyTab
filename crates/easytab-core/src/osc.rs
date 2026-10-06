@@ -13,6 +13,12 @@ pub enum Marker {
     CommandEnd { exit_code: Option<i32> },
     /// `OSC 7;file://hôte/chemin` : dossier courant du shell.
     WorkingDirectory(PathBuf),
+    /// `OSC 6973;aliases` : le shell envoie la liste de ses alias (bash, zsh),
+    /// à son premier prompt puis quand elle change. Les terminaux ignorent ce
+    /// numéro, propre à EasyTab.
+    AliasesStart,
+    /// `OSC 6973;alias;nom=valeur` : un alias de la liste.
+    Alias { name: String, value: String },
 }
 
 /// Taille maximale du corps d'une séquence OSC conservée en mémoire.
@@ -141,6 +147,9 @@ fn parse_osc(body: &[u8]) -> Option<Marker> {
     if let Some(url) = body.strip_prefix(b"7;") {
         return parse_file_url(url).map(Marker::WorkingDirectory);
     }
+    if let Some(rest) = body.strip_prefix(b"6973;") {
+        return parse_alias(rest);
+    }
     let rest = body.strip_prefix(b"133;")?;
     let (&kind, params) = rest.split_first()?;
     match kind {
@@ -157,6 +166,18 @@ fn parse_osc(body: &[u8]) -> Option<Marker> {
         }
         _ => None,
     }
+}
+
+fn parse_alias(rest: &[u8]) -> Option<Marker> {
+    if rest == b"aliases" {
+        return Some(Marker::AliasesStart);
+    }
+    let text = std::str::from_utf8(rest.strip_prefix(b"alias;")?).ok()?;
+    let (name, value) = text.split_once('=')?;
+    (!name.is_empty()).then(|| Marker::Alias {
+        name: name.to_string(),
+        value: value.to_string(),
+    })
 }
 
 /// `file://hôte/chemin%20encodé` -> `/chemin encodé`.
@@ -223,6 +244,20 @@ mod tests {
                 Marker::PromptStart,
                 Marker::InputStart,
                 Marker::CommandStart
+            ]
+        );
+    }
+
+    #[test]
+    fn parses_aliases() {
+        assert_eq!(
+            scan(b"\x1b]6973;aliases\x07\x1b]6973;alias;gs=git status --short\x07\x1b]6973;alias;=x\x07"),
+            [
+                Marker::AliasesStart,
+                Marker::Alias {
+                    name: "gs".into(),
+                    value: "git status --short".into()
+                },
             ]
         );
     }

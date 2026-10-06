@@ -30,6 +30,7 @@ branches, npm scripts, files… with their description. Pick one, press Tab, it'
 - **Your project's values**: branches, `package.json` scripts, `Makefile` targets, SSH hosts,
   docker containers.
 - **Your history** at the top of the list, and the suggestions you pick most often.
+- **Your shell**: aliases (`g push` completes like `git push`) and environment variables (`$HOME`).
 - **Nothing to learn**: your terminal and shell stay yours, the list never grabs the keyboard.
 
 <p align="center">
@@ -58,10 +59,11 @@ Then open a new terminal. To update: `easytab update`.
 
 | Key | Action |
 |---|---|
-| ↑ ↓ | Pick a suggestion |
+| ↑ ↓, Shift+Tab | Pick a suggestion |
 | Tab | Write it |
 | Enter | Write it if it completes the typed word, otherwise run the command |
 | Esc | Close the list |
+| Ctrl+Space | Open it again after Esc |
 
 | Command | |
 |---|---|
