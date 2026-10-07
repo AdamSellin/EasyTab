@@ -1,0 +1,15 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.10.0.schema.json
+PackageIdentifier: AdamSellin.EasyTab
+PackageVersion: 0.1.9
+InstallerType: zip
+NestedInstallerType: portable
+NestedInstallerFiles:
+- RelativeFilePath: easytab-x86_64-pc-windows-msvc\easytab.exe
+  PortableCommandAlias: easytab
+ReleaseDate: 2026-10-07
+Installers:
+- Architecture: x64
+  InstallerUrl: https://github.com/AdamSellin/EasyTab/releases/download/v0.1.9/easytab-x86_64-pc-windows-msvc.zip
+  InstallerSha256: D75965670A90EA952775C913E0301F89FE6126426F506B84A349A27F9C7CED9D
+ManifestType: installer
+ManifestVersion: 1.10.0

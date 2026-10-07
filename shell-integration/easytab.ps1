@@ -1,11 +1,16 @@
-# Integration EasyTab pour PowerShell, generee par `easytab init pwsh`.
-# `easytab install --shell pwsh` la charge deux fois : en haut du profil, pour
-# relancer PowerShell sous EasyTab avant de lire le reste, et en bas, pour
-# poser le hook de prompt apres les themes (oh-my-posh, starship...).
+# Integration EasyTab pour PowerShell. `easytab install --shell pwsh` copie
+# ce fichier dans ~/.easytab/bin/easytab-profile.ps1, a cote de easytab-term
+# (nomme easytab.ps1, il passerait avant easytab.exe), et le profil le
+# charge (par `.`) deux fois : en haut, pour relancer PowerShell sous EasyTab
+# avant de lire le reste, et en bas, pour poser le hook de prompt apres les
+# themes (oh-my-posh, starship...). Aucun chemin n'y est ecrit : le fichier
+# publie est le meme pour tous, et peut donc etre signe (politique AllSigned).
 # Desactiver ponctuellement : $env:EASYTAB_DISABLE = 1, puis lancer pwsh.
 # (Fichier en ASCII : Windows PowerShell 5 lit mal l'UTF-8 sans BOM.)
 
-$__easytab_term = __EASYTAB_TERM_BIN__
+# `easytab init pwsh` (anciens profils) remplace ces deux lignes par le chemin.
+$__easytab_term = Join-Path $PSScriptRoot 'easytab-term'
+if (Test-Path -LiteralPath "$__easytab_term.exe") { $__easytab_term += '.exe' }
 
 # Rend `easytab` (update, config, doctor) accessible sans son chemin complet.
 $__easytab_bin = Split-Path -Parent $__easytab_term
@@ -23,7 +28,10 @@ if (-not $env:EASYTAB_TERM -and -not $env:EASYTAB_DISABLE -and $Host.Name -eq 'C
     $__easytab_batch = $__easytab_args -match '^-(c|command|f|file|e|ec|encodedcommand|noni|noninteractive)$'
     if ($__easytab_noexit -or -not $__easytab_batch) {
         & $__easytab_term --shell (Get-Process -Id $PID).Path -- -NoLogo
-        exit $LASTEXITCODE
+        # Charge par `.`, ce `exit` ne quitte que ce fichier : le profil
+        # quitte ensuite PowerShell avec $__easytab_exit.
+        $__easytab_exit = $LASTEXITCODE
+        exit $__easytab_exit
     }
 }
 

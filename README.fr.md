@@ -62,6 +62,7 @@ irm https://github.com/AdamSellin/EasyTab/releases/latest/download/install.ps1 |
 </p>
 
 Ouvre ensuite un nouveau terminal. Pour mettre à jour : `easytab update`.
+Sur un PC d'entreprise qui bloque le script : [installer sans script](docs/guide.md#pc-dentreprise).
 
 ## Utiliser
 

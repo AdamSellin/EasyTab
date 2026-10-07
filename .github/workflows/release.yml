@@ -59,31 +59,82 @@ jobs:
           mkdir "$name"
           cp target/${{ matrix.target }}/release/easytab target/${{ matrix.target }}/release/easytab-term target/${{ matrix.target }}/release/easytab-overlay README.md LICENSE "$name"/
           tar czf "$name.tar.gz" "$name"
+      # Windows : programmes et scripts PowerShell, signés par SignPath
+      # (gratuit pour l'open source) si les variables SIGNPATH_* du dépôt
+      # sont définies. Signés, les antivirus et les politiques d'exécution
+      # (AllSigned) des PC d'entreprise les acceptent mieux. Configuration de
+      # l'artefact : .signpath/artifact-configuration.xml.
+      - name: Fichiers Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory windows | Out-Null
+          Copy-Item target/${{ matrix.target }}/release/easytab.exe, target/${{ matrix.target }}/release/easytab-term.exe, target/${{ matrix.target }}/release/easytab-overlay.exe, scripts/install.ps1 windows
+          Copy-Item shell-integration/easytab.ps1 windows/easytab-profile.ps1
+      - name: Envoi à SignPath
+        id: unsigned
+        if: runner.os == 'Windows' && vars.SIGNPATH_ORGANIZATION_ID != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-unsigned
+          path: windows/
+      - name: Signature
+        if: runner.os == 'Windows' && vars.SIGNPATH_ORGANIZATION_ID != ''
+        uses: signpath/github-action-submit-signing-request@v3
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_POLICY_SLUG }}
+          github-artifact-id: ${{ steps.unsigned.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: signed
+      # `irm | iex` refuse un BOM : la signature ne doit pas en ajouter.
+      - name: Fichiers signés
+        if: runner.os == 'Windows' && vars.SIGNPATH_ORGANIZATION_ID != ''
+        shell: pwsh
+        run: |
+          foreach ($file in Get-ChildItem windows) {
+            $signed = Join-Path signed $file.Name
+            $status = (Get-AuthenticodeSignature $signed).Status
+            if ($status -ne 'Valid') { throw "$($file.Name) : signature $status" }
+            Copy-Item $signed $file.FullName -Force
+          }
+          foreach ($script in 'easytab-profile.ps1', 'install.ps1') {
+            $bytes = [IO.File]::ReadAllBytes("windows/$script")
+            if ($bytes[0] -eq 0xEF) { throw "$script commence par un BOM" }
+          }
       - name: Archive (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           $name = "easytab-${{ matrix.target }}"
           New-Item -ItemType Directory $name | Out-Null
-          Copy-Item target/${{ matrix.target }}/release/easytab.exe, target/${{ matrix.target }}/release/easytab-term.exe, target/${{ matrix.target }}/release/easytab-overlay.exe, README.md, LICENSE $name
+          Copy-Item windows/easytab.exe, windows/easytab-term.exe, windows/easytab-overlay.exe, windows/easytab-profile.ps1, README.md, LICENSE $name
           Compress-Archive -Path $name -DestinationPath "$name.zip"
+          Copy-Item windows/install.ps1 install.ps1
       - uses: actions/upload-artifact@v4
         with:
           name: easytab-${{ matrix.target }}
-          path: easytab-${{ matrix.target }}.*
+          path: |
+            easytab-${{ matrix.target }}.*
+            install.ps1
 
   release:
     needs: build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # Archives seulement, pas l'artefact envoyé à SignPath.
       - uses: actions/download-artifact@v4
         with:
           path: dist
+          pattern: easytab-*
           merge-multiple: true
       - name: Publier la version
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$TAG" dist/* scripts/install.sh scripts/install.ps1 \
+          # dist/install.ps1 vient du job Windows (signé si SignPath est configuré).
+          gh release create "$TAG" dist/* scripts/install.sh \
             --target "$GITHUB_SHA" --title "EasyTab $TAG" --generate-notes

@@ -163,7 +163,8 @@ fn temp_home(name: &str) -> PathBuf {
     dir
 }
 
-/// Script d'intégration du dépôt, tel que `easytab init` le génère.
+/// Script d'intégration du dépôt, tel que `easytab init` le génère (celui de
+/// PowerShell cherche easytab-term à côté de lui, et ne l'y trouve pas).
 fn integration(file: &str) -> String {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../shell-integration")
@@ -518,12 +519,13 @@ fn integration_adds_easytab_to_path() {
 #[cfg(windows)]
 #[test]
 fn powershell_integration_adds_easytab_to_path() {
+    // Le script trouve son dossier par `$PSScriptRoot`, comme dans
+    // ~/.easytab/bin.
     let home = temp_home("pwsh-path");
-    let term = home.join("easytab-bin-test").join("easytab-term.exe");
-    let script = home.join("easytab.ps1");
-    let content = integration("easytab.ps1")
-        .replace("'easytab-term-absent'", &format!("'{}'", term.display()));
-    std::fs::write(&script, content).unwrap();
+    let bin = home.join("easytab-bin-test");
+    std::fs::create_dir_all(&bin).unwrap();
+    let script = bin.join("easytab.ps1");
+    std::fs::write(&script, integration("easytab.ps1")).unwrap();
     let source = script.display();
     let output = std::process::Command::new("powershell.exe")
         .args([
