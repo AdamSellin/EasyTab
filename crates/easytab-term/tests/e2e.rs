@@ -26,6 +26,9 @@ struct Terminal {
     parser: vt100::Parser,
     /// Journal d'easytab-term (`EASYTAB_LOG`), montré en cas d'échec.
     log: PathBuf,
+    // Lu par `wait_exit` (tests Windows), gardé partout pour que le
+    // programme vive autant que le terminal.
+    #[cfg_attr(not(windows), allow(dead_code))]
     child: Box<dyn portable_pty::Child + Send + Sync>,
     _master: Box<dyn portable_pty::MasterPty + Send>,
 }
@@ -153,6 +156,7 @@ impl Terminal {
     }
 
     /// Attend la fin du programme lancé, et renvoie son code de sortie.
+    #[cfg(windows)]
     fn wait_exit(&mut self) -> u32 {
         let start = Instant::now();
         loop {
