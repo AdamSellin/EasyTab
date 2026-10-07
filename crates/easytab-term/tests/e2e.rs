@@ -57,6 +57,15 @@ impl Terminal {
         cmd.env("EASYTAB_LOG", &log);
         cmd.env_remove("EASYTAB_TERM");
         cmd.env_remove("EASYTAB_DISABLE");
+        // Git Bash lance easytab-term avec son PATH, qui contient les
+        // programmes de Git (echo, ls…). Le PATH de Windows ne les a pas
+        // toujours : sans eux, `ecoh` n'aurait pas de correction.
+        if cfg!(windows) && shell.ends_with(r"Git\bin\bash.exe") {
+            let usr_bin = Path::new(shell).parent().unwrap().join(r"..\usr\bin");
+            let path = std::env::var_os("PATH").unwrap_or_default();
+            let dirs = std::iter::once(usr_bin).chain(std::env::split_paths(&path));
+            cmd.env("PATH", std::env::join_paths(dirs).unwrap());
+        }
         let child = pair
             .slave
             .spawn_command(cmd)
