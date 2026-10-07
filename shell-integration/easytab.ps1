@@ -28,10 +28,10 @@ if (-not $env:EASYTAB_TERM -and -not $env:EASYTAB_DISABLE -and $Host.Name -eq 'C
     $__easytab_batch = $__easytab_args -match '^-(c|command|f|file|e|ec|encodedcommand|noni|noninteractive)$'
     if ($__easytab_noexit -or -not $__easytab_batch) {
         & $__easytab_term --shell (Get-Process -Id $PID).Path -- -NoLogo
-        # Charge par `.`, ce `exit` ne quitte que ce fichier : le profil
-        # quitte ensuite PowerShell avec $__easytab_exit.
-        $__easytab_exit = $LASTEXITCODE
-        exit $__easytab_exit
+        # Ferme ce PowerShell avec le code d'EasyTab. `exit` ne quitterait que
+        # le profil (ou ce fichier) : la fenetre resterait ouverte sur un
+        # second PowerShell.
+        [Environment]::Exit($LASTEXITCODE)
     }
 }
 

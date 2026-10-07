@@ -74,6 +74,9 @@ cargo test
   désactive. Le test de bout en bout ne couvre pas ce cas : tester à la main.
 - Git Bash lancé par un programme Windows doit être un shell de connexion (`-l`) pour avoir
   `/usr/bin` dans le PATH.
+- Dans le profil PowerShell, `exit` ne quitte que le profil (ou le fichier chargé par `.`) : la
+  fenêtre resterait sur un second PowerShell. Après `easytab-term`, l'intégration fait
+  `[Environment]::Exit`. Test : `powershell_profile_relaunches_and_exits_once`.
 
 ## Fenêtre flottante
 

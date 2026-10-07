@@ -125,13 +125,12 @@ impl Shell {
     /// PowerShell charge le fichier [`PWSH_SCRIPT`] plutôt que la sortie de
     /// `easytab init` : les antivirus et AMSI se méfient
     /// d'`Invoke-Expression`, et la politique AllSigned refuse un script
-    /// qu'on ne peut pas signer. Chargé par `.`, son `exit` ne quitte que le
-    /// fichier : le profil le refait.
+    /// qu'on ne peut pas signer.
     fn load_line(self, exe: &Path) -> String {
         match self {
             Shell::Pwsh => {
                 let script = self.quote(&exe.with_file_name(PWSH_SCRIPT).to_string_lossy());
-                format!(". {script}; if ($null -ne $__easytab_exit) {{ exit $__easytab_exit }}")
+                format!(". {script}")
             }
             _ => {
                 let exe = self.quote(&exe.to_string_lossy());
@@ -753,11 +752,10 @@ mod tests {
         let line = Shell::Pwsh.load_line(exe);
         assert!(!line.contains("Invoke-Expression"));
         let script = exe.with_file_name(PWSH_SCRIPT);
-        assert!(line.starts_with(&format!(
-            ". {}; ",
-            rc::powershell_quote(&script.to_string_lossy())
-        )));
-        assert!(line.ends_with("{ exit $__easytab_exit }"));
+        assert_eq!(
+            line,
+            format!(". {}", rc::powershell_quote(&script.to_string_lossy()))
+        );
     }
 
     #[test]
