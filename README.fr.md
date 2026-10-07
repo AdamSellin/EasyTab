@@ -88,6 +88,22 @@ Les messages sont en français si le système l'est, sinon en anglais (`EASYTAB_
 
 Tout le reste (réglages, specs personnelles, compilation) est dans le [guide](docs/guide.md).
 
+## Signature du code
+
+Signature de code gratuite fournie par [SignPath.io](https://about.signpath.io), certificat de
+[SignPath Foundation](https://signpath.org) (*Free code signing provided by SignPath.io,
+certificate by SignPath Foundation*). Les programmes Windows et les scripts PowerShell de chaque
+version sont compilés et signés par le [workflow Release](.github/workflows/release.yml), sur les
+machines de GitHub. La signature est en cours de mise en place : les versions actuelles ne sont
+pas encore signées.
+
+- Contributeurs et relecteurs : [Adam Sellin](https://github.com/AdamSellin)
+- Approbateurs : [Adam Sellin](https://github.com/AdamSellin)
+
+Confidentialité : ce programme n'envoie aucune information à d'autres systèmes en réseau, sauf à
+la demande expresse de l'utilisateur ou de la personne qui l'installe ou l'utilise. Seul
+`easytab update` contacte GitHub, pour télécharger la dernière version.
+
 ## Licence
 
 MIT. Les specs de complétion viennent de [withfig/autocomplete](https://github.com/withfig/autocomplete)

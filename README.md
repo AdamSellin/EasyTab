@@ -86,6 +86,20 @@ Messages are in English, or in French if your system is (`EASYTAB_LANG=en` to fo
 Everything else (settings, custom specs, building from source) is in the
 [guide](docs/guide.md) (in French for now).
 
+## Code signing policy
+
+Free code signing provided by [SignPath.io](https://about.signpath.io), certificate by
+[SignPath Foundation](https://signpath.org). The Windows programs and PowerShell scripts of each
+release are built and signed by the [Release workflow](.github/workflows/release.yml) on
+GitHub-hosted runners. Signing is being set up: current releases are not signed yet.
+
+- Committers and reviewers: [Adam Sellin](https://github.com/AdamSellin)
+- Approvers: [Adam Sellin](https://github.com/AdamSellin)
+
+Privacy: this program will not transfer any information to other networked systems unless
+specifically requested by the user or the person installing or operating it. Only
+`easytab update` contacts GitHub, to download the latest release.
+
 ## License
 
 MIT. Completion specs come from [withfig/autocomplete](https://github.com/withfig/autocomplete)
