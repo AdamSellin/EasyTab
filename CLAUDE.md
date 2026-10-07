@@ -46,8 +46,10 @@ cargo test
 
 ## Conventions
 
-- Depuis octobre 2026 : nouveaux commentaires, commits, PR et noms de branche en anglais. Le code
-  et les commentaires existants restent en français : ne pas les traduire d'office.
+- Depuis octobre 2026 : nouveaux commentaires, commits, PR et noms de branche en anglais, et tout
+  texte visible sur GitHub (titres et notes de release, noms d'étapes des workflows, messages
+  d'erreur de la CI). Le code et les commentaires existants restent en français : ne pas les
+  traduire d'office.
 - Les messages affichés à l'utilisateur sont bilingues : anglais par défaut, français si le
   système l'est (`EASYTAB_LANG` force le choix). En Rust, `tr("english", "français")` ou `tr!("… {x}", "… {x}")` de
   `crates/easytab-core/src/lang.rs` (partagé avec `easytab-cli` par `#[path]`) ; dans les

@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Version à publier (ex. v0.2.0)"
+        description: "Version to release (e.g. v0.2.0)"
         required: true
 
 permissions:
@@ -40,13 +40,13 @@ jobs:
         with:
           targets: ${{ matrix.target }}
       # Fenêtre flottante sous Linux : WebKitGTK et GTK.
-      - name: Paquets système (Linux)
+      - name: System packages (Linux)
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev
       # Les programmes affichent et comparent (easytab update) le numéro du tag.
-      - name: Numéro de version
+      - name: Version number
         shell: bash
         run: |
           sed -i.bak "s/^version = \".*\"$/version = \"${TAG#v}\"/" Cargo.toml
@@ -64,21 +64,21 @@ jobs:
       # sont définies. Signés, les antivirus et les politiques d'exécution
       # (AllSigned) des PC d'entreprise les acceptent mieux. Configuration de
       # l'artefact : .signpath/artifact-configuration.xml.
-      - name: Fichiers Windows
+      - name: Windows files
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           New-Item -ItemType Directory windows | Out-Null
           Copy-Item target/${{ matrix.target }}/release/easytab.exe, target/${{ matrix.target }}/release/easytab-term.exe, target/${{ matrix.target }}/release/easytab-overlay.exe, scripts/install.ps1 windows
           Copy-Item shell-integration/easytab.ps1 windows/easytab-profile.ps1
-      - name: Envoi à SignPath
+      - name: Upload for SignPath
         id: unsigned
         if: runner.os == 'Windows' && vars.SIGNPATH_ORGANIZATION_ID != ''
         uses: actions/upload-artifact@v4
         with:
           name: windows-unsigned
           path: windows/
-      - name: Signature
+      - name: Sign
         if: runner.os == 'Windows' && vars.SIGNPATH_ORGANIZATION_ID != ''
         uses: signpath/github-action-submit-signing-request@v3
         with:
@@ -90,19 +90,19 @@ jobs:
           wait-for-completion: true
           output-artifact-directory: signed
       # `irm | iex` refuse un BOM : la signature ne doit pas en ajouter.
-      - name: Fichiers signés
+      - name: Signed files
         if: runner.os == 'Windows' && vars.SIGNPATH_ORGANIZATION_ID != ''
         shell: pwsh
         run: |
           foreach ($file in Get-ChildItem windows) {
             $signed = Join-Path signed $file.Name
             $status = (Get-AuthenticodeSignature $signed).Status
-            if ($status -ne 'Valid') { throw "$($file.Name) : signature $status" }
+            if ($status -ne 'Valid') { throw "$($file.Name): signature $status" }
             Copy-Item $signed $file.FullName -Force
           }
           foreach ($script in 'easytab-profile.ps1', 'install.ps1') {
             $bytes = [IO.File]::ReadAllBytes("windows/$script")
-            if ($bytes[0] -eq 0xEF) { throw "$script commence par un BOM" }
+            if ($bytes[0] -eq 0xEF) { throw "$script starts with a BOM" }
           }
       - name: Archive (Windows)
         if: runner.os == 'Windows'
@@ -131,7 +131,7 @@ jobs:
           path: dist
           pattern: easytab-*
           merge-multiple: true
-      - name: Publier la version
+      - name: Publish the release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
