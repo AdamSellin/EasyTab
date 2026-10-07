@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Configuration d'artefact du projet SignPath (à recopier dans SignPath :
+     Project > Artifact configurations). L'artefact « windows-unsigned » du
+     workflow Release est un zip de ces fichiers, à la racine. -->
+<artifact-configuration xmlns="http://signpath.io/artifact-configuration/v1">
+  <zip-file>
+    <pe-file path="easytab.exe">
+      <authenticode-sign/>
+    </pe-file>
+    <pe-file path="easytab-term.exe">
+      <authenticode-sign/>
+    </pe-file>
+    <pe-file path="easytab-overlay.exe">
+      <authenticode-sign/>
+    </pe-file>
+    <powershell-file path="easytab-profile.ps1">
+      <authenticode-sign/>
+    </powershell-file>
+    <powershell-file path="install.ps1">
+      <authenticode-sign/>
+    </powershell-file>
+  </zip-file>
+</artifact-configuration>

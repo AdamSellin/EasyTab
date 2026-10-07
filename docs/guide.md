@@ -253,10 +253,49 @@ Windows, dans Windows Terminal ou le terminal de VS Code. Dans la fenêtre « Gi
 (mintty), qui ne fournit pas de console aux programmes Windows, EasyTab passe par `winpty`, livré
 avec Git for Windows ; sans lui, le shell s'y lance sans EasyTab, avec un message.
 
+PowerShell : le profil charge `~/.easytab/bin/easytab-profile.ps1` (`. 'chemin'`), copié par
+`easytab install --shell pwsh` depuis l'archive ; `easytab init pwsh` l'affiche encore pour les
+profils d'avant ce fichier. Il ne contient aucun chemin, pour que la version publiée soit signée.
+
+### PC d'entreprise
+
+Les antivirus et AMSI se méfient de `irm … | iex` (télécharger puis exécuter), et une politique
+d'exécution `AllSigned` ou `Restricted` refuse les scripts. Sans script :
+
+1. télécharger `easytab-x86_64-pc-windows-msvc.zip` depuis la
+   [dernière version](https://github.com/AdamSellin/EasyTab/releases/latest) et l'extraire ;
+2. dans le dossier extrait : `.\easytab.exe install --shell pwsh` (et `--shell bash` pour Git
+   Bash), puis ouvrir un nouveau terminal.
+
+Avec `AllSigned`, il faut la version signée (voir plus bas) : `easytab-profile.ps1` est alors signé lui
+aussi. Si l'antivirus bloque quand même un programme, le signaler comme faux positif
+(Microsoft : <https://www.microsoft.com/wdsi/filesubmission>) ou demander au service informatique
+d'autoriser l'éditeur.
+
 **Publier une version** : « Run workflow » sur le workflow `Release` dans l'onglet Actions, avec
 le nom de la version (`v0.2.0`), ou `git tag v0.2.0 && git push origin v0.2.0`. Le workflow
 compile pour Linux, macOS (Intel et Apple Silicon) et Windows, puis publie les archives et les
 scripts d'installation.
+
+**Signature (Windows)** : le workflow fait signer par [SignPath](https://signpath.org) (gratuit
+pour l'open source) les trois `.exe`, `easytab-profile.ps1` et `install.ps1`, dès que le dépôt a la
+variable `SIGNPATH_ORGANIZATION_ID` ; sans elle, la version sort non signée. À régler une fois :
+
+- dans SignPath : activer le système de compilation de confiance « GitHub.com » et le lier au
+  projet ; configuration d'artefact du projet : `.signpath/artifact-configuration.xml` ;
+- dans GitHub (Settings → Secrets and variables → Actions) : le secret `SIGNPATH_API_TOKEN`
+  (jeton d'un utilisateur SignPath qui peut soumettre), et les variables
+  `SIGNPATH_ORGANIZATION_ID`, `SIGNPATH_PROJECT_SLUG` et `SIGNPATH_POLICY_SLUG`.
+
+Le workflow vérifie chaque signature et refuse un script signé qui commencerait par un BOM
+(`irm | iex` le refuse).
+
+**winget** : `packaging/winget` décrit le paquet `AdamSellin.EasyTab` (le zip, avec `easytab`
+dans le PATH ; il reste à lancer `easytab install`). Avant de le proposer, y mettre la version,
+l'URL et le SHA-256 (`Get-FileHash`) de la dernière version publiée, puis
+`winget validate --manifest packaging\winget` et `wingetcreate submit packaging\winget`.
+Ensuite, pour chaque version : `wingetcreate update AdamSellin.EasyTab --version 0.2.0
+--urls <url du zip> --submit`.
 
 ## Compiler depuis les sources
 

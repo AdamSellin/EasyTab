@@ -58,6 +58,8 @@ irm https://github.com/AdamSellin/EasyTab/releases/latest/download/install.ps1 |
 </p>
 
 Then open a new terminal. To update: `easytab update`.
+On a company PC that blocks the script: [install without it](docs/guide.md#pc-dentreprise) (in
+French): download the Windows zip, then run `.\easytab.exe install --shell pwsh` from it.
 
 ## Use
 

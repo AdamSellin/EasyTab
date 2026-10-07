@@ -122,11 +122,21 @@ impl Shell {
     }
 
     /// Ligne ajoutée au fichier de config pour charger l'intégration.
+    /// PowerShell charge le fichier [`PWSH_SCRIPT`] plutôt que la sortie de
+    /// `easytab init` : les antivirus et AMSI se méfient
+    /// d'`Invoke-Expression`, et la politique AllSigned refuse un script
+    /// qu'on ne peut pas signer. Chargé par `.`, son `exit` ne quitte que le
+    /// fichier : le profil le refait.
     fn load_line(self, exe: &Path) -> String {
-        let exe = self.quote(&exe.to_string_lossy());
         match self {
-            Shell::Pwsh => format!("Invoke-Expression (& {exe} init pwsh | Out-String)"),
-            _ => format!("eval \"$({exe} init {})\"", self.name()),
+            Shell::Pwsh => {
+                let script = self.quote(&exe.with_file_name(PWSH_SCRIPT).to_string_lossy());
+                format!(". {script}; if ($null -ne $__easytab_exit) {{ exit $__easytab_exit }}")
+            }
+            _ => {
+                let exe = self.quote(&exe.to_string_lossy());
+                format!("eval \"$({exe} init {})\"", self.name())
+            }
         }
     }
 
@@ -205,11 +215,57 @@ fn update(force: bool) -> Result<()> {
 
 fn init_script(shell: Shell) -> Result<String> {
     let term = shell.quote(&term_binary().to_string_lossy());
-    Ok(shell.script().replace("__EASYTAB_TERM_BIN__", &term))
+    Ok(match shell {
+        // Lu par `Invoke-Expression`, le script n'a pas de `$PSScriptRoot` :
+        // les lignes qui cherchent easytab-term à côté de lui reçoivent le
+        // chemin.
+        Shell::Pwsh => shell
+            .script()
+            .lines()
+            .filter(|line| !line.contains("\"$__easytab_term.exe\""))
+            .map(|line| {
+                if line.starts_with("$__easytab_term = ") {
+                    format!("$__easytab_term = {term}\n")
+                } else {
+                    format!("{line}\n")
+                }
+            })
+            .collect(),
+        _ => shell.script().replace("__EASYTAB_TERM_BIN__", &term),
+    })
+}
+
+/// Intégration PowerShell, copiée à côté des programmes.
+const PWSH_SCRIPT: &str = "easytab-profile.ps1";
+
+/// Écrit [`PWSH_SCRIPT`] dans le dossier de `exe` : la copie signée livrée
+/// dans l'archive si elle est à côté de ce programme, sinon le script
+/// embarqué. Le contenu est recopié plutôt que le fichier, pour ne pas
+/// emporter la marque « téléchargé d'Internet » (flux `Zone.Identifier`),
+/// qui ferait refuser un script non signé par la politique RemoteSigned.
+fn write_pwsh_script(exe: &Path) -> Result<()> {
+    let target = exe.with_file_name(PWSH_SCRIPT);
+    let content = match current_exe() {
+        // Lancé depuis ~/.easytab/bin : le fichier y est déjà, sauf pour
+        // une installation antérieure à ce fichier.
+        Ok(current) if current.with_file_name(PWSH_SCRIPT) == target => {
+            if target.is_file() {
+                return Ok(());
+            }
+            None
+        }
+        Ok(current) => fs::read(current.with_file_name(PWSH_SCRIPT)).ok(),
+        Err(_) => None,
+    };
+    let content = content.unwrap_or_else(|| Shell::Pwsh.script().as_bytes().to_vec());
+    fs::write(&target, content).with_context(|| writing(&target))
 }
 
 fn install(shell: Shell) -> Result<()> {
     let exe = copy_binaries()?;
+    if shell == Shell::Pwsh {
+        write_pwsh_script(&exe)?;
+    }
     let line = shell.load_line(&exe);
     for path in shell.rc_files()? {
         let content = read_or_empty(&path)?;
@@ -273,7 +329,7 @@ fn install_dir() -> Result<PathBuf> {
 /// Copie `easytab` et `easytab-term` dans [`install_dir`] ; renvoie le chemin
 /// de `easytab` installé.
 fn copy_binaries() -> Result<PathBuf> {
-    let exe = std::env::current_exe().context(tr(
+    let exe = current_exe().context(tr(
         "path of easytab not found",
         "chemin de easytab introuvable",
     ))?;
@@ -595,11 +651,21 @@ fn edit_hint(path: &Path) {
 /// `easytab-term` installé à côté de `easytab`, sinon cherché dans le PATH.
 fn term_binary() -> PathBuf {
     let name = format!("easytab-term{}", std::env::consts::EXE_SUFFIX);
-    std::env::current_exe()
+    current_exe()
         .ok()
         .and_then(|exe| exe.parent().map(|dir| dir.join(&name)))
         .filter(|path| path.is_file())
         .unwrap_or_else(|| PathBuf::from(name))
+}
+
+/// Chemin de ce programme. winget (paquet portable) le lance par un lien
+/// symbolique : les autres programmes sont à côté du fichier, pas du lien.
+fn current_exe() -> std::io::Result<PathBuf> {
+    let exe = std::env::current_exe()?;
+    if fs::symlink_metadata(&exe).is_ok_and(|meta| meta.file_type().is_symlink()) {
+        return fs::canonicalize(&exe);
+    }
+    Ok(exe)
 }
 
 fn which(name: &Path) -> Option<PathBuf> {
@@ -679,6 +745,28 @@ mod tests {
         assert_eq!(Shell::from_env("", true).unwrap(), Shell::Pwsh);
         assert!(Shell::from_env("", false).is_err());
         assert!(Shell::from_env("/usr/bin/fish", true).is_err());
+    }
+
+    #[test]
+    fn powershell_loads_the_script_file() {
+        let exe = Path::new("C:\\Users\\a'b\\.easytab\\bin\\easytab.exe");
+        let line = Shell::Pwsh.load_line(exe);
+        assert!(!line.contains("Invoke-Expression"));
+        let script = exe.with_file_name(PWSH_SCRIPT);
+        assert!(line.starts_with(&format!(
+            ". {}; ",
+            rc::powershell_quote(&script.to_string_lossy())
+        )));
+        assert!(line.ends_with("{ exit $__easytab_exit }"));
+    }
+
+    #[test]
+    fn init_pwsh_writes_the_term_path() {
+        let script = init_script(Shell::Pwsh).unwrap();
+        let term = rc::powershell_quote(&term_binary().to_string_lossy());
+        assert!(script.contains(&format!("\n$__easytab_term = {term}\n")));
+        assert!(!script.contains("$PSScriptRoot"));
+        assert!(!script.contains('\r'));
     }
 
     #[test]
