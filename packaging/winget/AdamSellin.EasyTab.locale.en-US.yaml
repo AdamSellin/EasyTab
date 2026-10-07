@@ -1,6 +1,6 @@
 # yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.10.0.schema.json
 PackageIdentifier: AdamSellin.EasyTab
-PackageVersion: 0.1.9
+PackageVersion: 0.1.10
 PackageLocale: en-US
 Publisher: Adam Sellin
 PublisherUrl: https://github.com/AdamSellin
@@ -21,6 +21,6 @@ Tags:
 - completion
 - powershell
 - terminal
-ReleaseNotesUrl: https://github.com/AdamSellin/EasyTab/releases/tag/v0.1.9
+ReleaseNotesUrl: https://github.com/AdamSellin/EasyTab/releases/tag/v0.1.10
 ManifestType: defaultLocale
 ManifestVersion: 1.10.0
