@@ -25,9 +25,11 @@ cargo test
   `rustup target add aarch64-apple-darwin`,
   `CC_aarch64_apple_darwin=clang cargo clippy -p easytab-overlay --target aarch64-apple-darwin`.
   `easytab-term` ne se compile pas ainsi (QuickJS demande un gcc MinGW).
-- Publier une version : « Run workflow » sur `Release` dans l'onglet Actions, avec le nom de la
-  version (`v0.1.1`), ou pousser un tag `v*`. Passer d'abord `version` dans `Cargo.toml` au même
-  numéro : la release le corrige d'elle-même, mais une compilation locale l'affiche.
+- Publier une version : passer `version` dans `Cargo.toml` au nouveau numéro (et `cargo update
+  --workspace`) dans une PR « Version 0.1.x » : `main` est protégée (ruleset sans exception), on
+  n'y pousse jamais directement. Une fois la PR fusionnée, « Run workflow » sur `Release` dans
+  l'onglet Actions avec le nom de la version (`v0.1.1`). Les tags `v*` ne peuvent être ni
+  déplacés ni supprimés.
 
 - Réglages de l'utilisateur : `crates/easytab-core/src/config.rs` (`~/.easytab/config.toml`),
   partagé avec `easytab-cli` par `#[path]` pour ne pas y embarquer QuickJS. Tout nouveau réglage
@@ -44,9 +46,10 @@ cargo test
 
 ## Conventions
 
-- Code, commentaires, commits et PR en français. Les messages affichés à l'utilisateur sont
-  bilingues : anglais par défaut, français si le système l'est (`EASYTAB_LANG` force le choix).
-  En Rust, `tr("english", "français")` ou `tr!("… {x}", "… {x}")` de
+- Depuis octobre 2026 : nouveaux commentaires, commits, PR et noms de branche en anglais. Le code
+  et les commentaires existants restent en français : ne pas les traduire d'office.
+- Les messages affichés à l'utilisateur sont bilingues : anglais par défaut, français si le
+  système l'est (`EASYTAB_LANG` force le choix). En Rust, `tr("english", "français")` ou `tr!("… {x}", "… {x}")` de
   `crates/easytab-core/src/lang.rs` (partagé avec `easytab-cli` par `#[path]`) ; dans les
   scripts d'installation, `say`/`Tr`.
 - Une PR par sujet, fusionnée en squash. Tests unitaires dans le fichier du code (`mod tests`).
