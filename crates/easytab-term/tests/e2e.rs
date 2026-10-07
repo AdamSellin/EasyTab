@@ -26,12 +26,33 @@ struct Terminal {
     parser: vt100::Parser,
     /// Journal d'easytab-term (`EASYTAB_LOG`), montré en cas d'échec.
     log: PathBuf,
-    _child: Box<dyn portable_pty::Child + Send + Sync>,
+    child: Box<dyn portable_pty::Child + Send + Sync>,
     _master: Box<dyn portable_pty::MasterPty + Send>,
 }
 
 impl Terminal {
+    /// `shell` lancé sous easytab-term.
     fn start(shell: &str, args: &[String], home: &Path) -> Self {
+        let mut cmd = CommandBuilder::new(env!("CARGO_BIN_EXE_easytab-term"));
+        cmd.arg("--shell");
+        cmd.arg(shell);
+        cmd.arg("--");
+        cmd.args(args);
+        // Git Bash lance easytab-term avec son PATH, qui contient les
+        // programmes de Git (echo, ls…). Le PATH de Windows ne les a pas
+        // toujours : sans eux, `ecoh` n'aurait pas de correction.
+        if cfg!(windows) && shell.ends_with(r"Git\bin\bash.exe") {
+            let usr_bin = Path::new(shell).parent().unwrap().join(r"..\usr\bin");
+            let path = std::env::var_os("PATH").unwrap_or_default();
+            let dirs = std::iter::once(usr_bin).chain(std::env::split_paths(&path));
+            cmd.env("PATH", std::env::join_paths(dirs).unwrap());
+        }
+        Self::spawn(cmd, home)
+    }
+
+    /// Lance `cmd` dans le pseudo-terminal, avec `home` comme dossier
+    /// personnel.
+    fn spawn(mut cmd: CommandBuilder, home: &Path) -> Self {
         let pair = native_pty_system()
             .openpty(PtySize {
                 rows: ROWS,
@@ -40,11 +61,6 @@ impl Terminal {
                 pixel_height: 0,
             })
             .expect("ouverture du pseudo-terminal");
-        let mut cmd = CommandBuilder::new(env!("CARGO_BIN_EXE_easytab-term"));
-        cmd.arg("--shell");
-        cmd.arg(shell);
-        cmd.arg("--");
-        cmd.args(args);
         cmd.cwd(home);
         cmd.env("HOME", home);
         cmd.env("USERPROFILE", home);
@@ -57,19 +73,10 @@ impl Terminal {
         cmd.env("EASYTAB_LOG", &log);
         cmd.env_remove("EASYTAB_TERM");
         cmd.env_remove("EASYTAB_DISABLE");
-        // Git Bash lance easytab-term avec son PATH, qui contient les
-        // programmes de Git (echo, ls…). Le PATH de Windows ne les a pas
-        // toujours : sans eux, `ecoh` n'aurait pas de correction.
-        if cfg!(windows) && shell.ends_with(r"Git\bin\bash.exe") {
-            let usr_bin = Path::new(shell).parent().unwrap().join(r"..\usr\bin");
-            let path = std::env::var_os("PATH").unwrap_or_default();
-            let dirs = std::iter::once(usr_bin).chain(std::env::split_paths(&path));
-            cmd.env("PATH", std::env::join_paths(dirs).unwrap());
-        }
         let child = pair
             .slave
             .spawn_command(cmd)
-            .expect("lancement d'easytab-term");
+            .expect("lancement dans le pseudo-terminal");
         drop(pair.slave);
 
         let mut reader = pair.master.try_clone_reader().unwrap();
@@ -88,7 +95,7 @@ impl Terminal {
             output,
             parser: vt100::Parser::new(ROWS, COLS, 0),
             log,
-            _child: child,
+            child,
             _master: pair.master,
         }
     }
@@ -143,6 +150,23 @@ impl Terminal {
         let lines: Vec<&str> = log.lines().collect();
         let tail = lines[lines.len().saturating_sub(40)..].join("\n");
         format!("Écran :\n{}\nJournal :\n{tail}", self.screen())
+    }
+
+    /// Attend la fin du programme lancé, et renvoie son code de sortie.
+    fn wait_exit(&mut self) -> u32 {
+        let start = Instant::now();
+        loop {
+            if let Some(status) = self.child.try_wait().unwrap() {
+                return status.exit_code();
+            }
+            if start.elapsed() > TIMEOUT {
+                panic!(
+                    "le programme tourne toujours après {TIMEOUT:?}.\n{}",
+                    self.report()
+                );
+            }
+            self.pump(Duration::from_millis(200));
+        }
     }
 
     /// Attend que l'écran vérifie `ok`, sinon échoue en montrant l'écran.
@@ -311,6 +335,39 @@ fn start_powershell(name: &str) -> Terminal {
     let mut term = Terminal::start(shell, &args, &home);
     term.wait_for("le prompt PowerShell", |t| t.cursor_line().ends_with('>'));
     term
+}
+
+/// Comme une nouvelle fenêtre : PowerShell, hors d'EasyTab, charge le profil
+/// écrit par `easytab install`, se relance sous easytab-term, et un seul
+/// `exit` ferme la fenêtre avec son code. (Un `exit` dans le profil ne
+/// quitterait que le profil : il restait un second PowerShell.)
+#[cfg(windows)]
+#[test]
+fn powershell_profile_relaunches_and_exits_once() {
+    let home = temp_home("pwsh-profile");
+    let bin = home.join(".easytab").join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    std::fs::copy(
+        env!("CARGO_BIN_EXE_easytab-term"),
+        bin.join("easytab-term.exe"),
+    )
+    .unwrap();
+    let script = bin.join("easytab-profile.ps1");
+    std::fs::write(&script, integration("easytab.ps1")).unwrap();
+    // La ligne que `easytab install --shell pwsh` met dans le profil.
+    let profile = home.join("profile.ps1");
+    std::fs::write(&profile, format!(". '{}'\n", script.display())).unwrap();
+    let mut cmd = CommandBuilder::new("powershell.exe");
+    cmd.args(["-NoLogo", "-NoProfile", "-NoExit", "-Command"]);
+    cmd.arg(format!(". '{}'", profile.display()));
+    let mut term = Terminal::spawn(cmd, &home);
+    term.wait_for("le prompt PowerShell", |t| t.cursor_line().ends_with('>'));
+    term.send(b"Write-Host \"sous-easytab=[$env:EASYTAB_TERM]\"\r");
+    term.wait_for("PowerShell relancé sous EasyTab", |t| {
+        t.screen().contains("sous-easytab=[1]")
+    });
+    term.send(b"exit 3\r");
+    assert_eq!(term.wait_exit(), 3, "\n{}", term.report());
 }
 
 /// Un alias PowerShell reçoit les paramètres de sa cmdlet : `ls` est
