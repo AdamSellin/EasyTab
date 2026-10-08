@@ -5,8 +5,11 @@
 //! Il couvre ce que les tests unitaires ne voient pas : le démarrage du shell
 //! sous le wrapper, l'affichage de la liste, et les touches Entrée et Échap
 //! telles que la console les envoie.
+//!
+//! Runs on Linux, macOS and Windows; the zsh tests run wherever zsh is
+//! installed (always on macOS).
 
-#![cfg(any(windows, target_os = "linux"))]
+#![cfg(any(windows, unix))]
 
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -645,6 +648,63 @@ fn start_bash(name: &str, prepare: impl FnOnce(&Path)) -> Option<Terminal> {
     let mut term = Terminal::start(&bash, &args, &home);
     term.wait_for("le prompt bash", |t| t.cursor_line() == "$");
     Some(term)
+}
+
+/// zsh, macOS's default shell (`None` if absent), with only the test's
+/// `~/.zshrc`. `prepare` fills the home folder before the launch.
+#[cfg(unix)]
+fn start_zsh(name: &str, prepare: impl FnOnce(&Path)) -> Option<Terminal> {
+    let found = std::process::Command::new("zsh")
+        .args(["-f", "-c", "true"])
+        .status()
+        .is_ok_and(|status| status.success());
+    if !found {
+        eprintln!("zsh not found: test skipped");
+        return None;
+    }
+    let home = temp_home(name);
+    prepare(&home);
+    std::fs::write(
+        home.join(".zshrc"),
+        format!("PS1='$ '\n{}", integration("easytab.zsh")),
+    )
+    .unwrap();
+    // -d: no /etc/zshrc (macOS sets its own prompt and history there).
+    let args = ["-d".to_string(), "-i".to_string()];
+    let mut term = Terminal::start("zsh", &args, &home);
+    term.wait_for("the zsh prompt", |t| t.cursor_line() == "$");
+    Some(term)
+}
+
+#[cfg(unix)]
+#[test]
+fn zsh_suggests_and_inserts() {
+    if let Some(mut term) = start_zsh("zsh", |_| {}) {
+        completes_git_checkout(&mut term);
+    }
+}
+
+/// Commands from `~/.zsh_history` are suggested whole.
+#[cfg(unix)]
+#[test]
+fn zsh_suggests_history() {
+    let Some(mut term) = start_zsh("zsh-history", |home| {
+        std::fs::write(
+            home.join(".zsh_history"),
+            ": 1696500000:0;echo easytab-history-test\n",
+        )
+        .unwrap();
+    }) else {
+        return;
+    };
+    term.send(b"echo eas");
+    term.wait_for("the history command", |t| {
+        t.screen().contains("echo easytab-history-test") && t.cursor_line() == "$ echo eas"
+    });
+    term.send(b"\t");
+    term.wait_for("the completed line", |t| {
+        t.cursor_line() == "$ echo easytab-history-test"
+    });
 }
 
 #[test]
