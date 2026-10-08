@@ -43,6 +43,7 @@ if [[ -n "$EASYTAB_TERM" ]]; then
   # premier prompt puis quand ils changent. Lus dans BASH_ALIASES, sans
   # sous-shell : lancer un programme à chaque prompt ralentirait Git Bash.
   __easytab_aliases_sent=
+  if (( BASH_VERSINFO[0] >= 4 )); then
   __easytab_send_aliases() {
     local all="${!BASH_ALIASES[*]}=${BASH_ALIASES[*]}" name
     [[ "$all" == "$__easytab_aliases_sent" ]] && return
@@ -52,6 +53,27 @@ if [[ -n "$EASYTAB_TERM" ]]; then
       printf '\e]6973;alias;%s=%s\a' "$name" "${BASH_ALIASES[$name]}"
     done
   }
+  else
+  # bash 3.2 (macOS's /bin/bash) has no BASH_ALIASES: read `alias -p`,
+  # whose lines look like `alias g='git'` (a quote inside is written '\'').
+  __easytab_send_aliases() {
+    local all line name value
+    all=$(alias -p)
+    [[ "$all" == "$__easytab_aliases_sent" ]] && return
+    __easytab_aliases_sent=$all
+    printf '\e]6973;aliases\a'
+    while IFS= read -r line; do
+      [[ "$line" == "alias "*=* ]] || continue
+      line=${line#alias }
+      name=${line%%=*}
+      value=${line#*=}
+      value=${value#\'}
+      value=${value%\'}
+      value=${value//"'\\''"/"'"}
+      printf '\e]6973;alias;%s=%s\a' "$name" "$value"
+    done <<< "$all"
+  }
+  fi
 
   __easytab_prompt() {
     __easytab_send_aliases
