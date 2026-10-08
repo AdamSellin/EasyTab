@@ -14,7 +14,8 @@ cargo test
 ```
 
 - `crates/easytab-term/tests/e2e.rs` lance vraiment `easytab-term` dans un pseudo-terminal (bash
-  sous Linux, PowerShell et Git Bash sous Windows), tape `git checko`, Tab, ↓, Entrée, Échap.
+  sous Linux et macOS, zsh là où il est installé, PowerShell et Git Bash sous Windows), tape
+  `git checko`, Tab, ↓, Entrée, Échap.
   À compléter quand on touche au clavier, à la liste ou au démarrage du shell.
 - Installer en local : `cargo build --release`, puis `target/release/easytab install` (ajouter
   `--shell pwsh` pour PowerShell). Fermer les terminaux ouverts : ils gardent l'ancien
