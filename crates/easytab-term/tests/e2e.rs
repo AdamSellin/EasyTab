@@ -312,8 +312,10 @@ fn powershell_suggests_cmdlet_parameters() {
     let mut term = Terminal::start(shell, &args, &home);
     term.wait_for("le prompt PowerShell", |t| t.cursor_line().ends_with('>'));
     term.send(b"Remove-Item -Recu");
+    // Wait for the whole line too: on a slow machine PowerShell may have shown
+    // only `-R`, whose list already has `-Recurse`.
     term.wait_for("le paramètre -Recurse", |t| {
-        t.screen().contains("-Recurse") && !t.cursor_line().ends_with("-Recurse")
+        t.screen().contains("-Recurse") && t.cursor_line().ends_with("Remove-Item -Recu")
     });
     term.send(b"\t");
     term.wait_for("la ligne Remove-Item -Recurse", |t| {
@@ -385,7 +387,7 @@ fn powershell_aliases_get_cmdlet_parameters() {
     let mut term = start_powershell("pwsh-alias");
     term.send(b"ls -Recu");
     term.wait_for("le paramètre -Recurse de ls", |t| {
-        t.screen().contains("-Recurse") && !t.cursor_line().ends_with("-Recurse")
+        t.screen().contains("-Recurse") && t.cursor_line().ends_with("ls -Recu")
     });
     term.send(b"\t");
     term.wait_for("la ligne ls -Recurse", |t| {
@@ -399,7 +401,9 @@ fn powershell_aliases_get_cmdlet_parameters() {
 fn completes_windows_tools() {
     let mut term = start_powershell("pwsh-windows-tools");
     term.send(b"robocopy a b /mir");
-    term.wait_for("l'option /MIR", |t| t.screen().contains("/MIR"));
+    term.wait_for("l'option /MIR", |t| {
+        t.screen().contains("/MIR") && t.cursor_line().ends_with("robocopy a b /mir")
+    });
     term.send(b"\t");
     term.wait_for("la ligne robocopy a b /MIR", |t| {
         t.cursor_line().ends_with("robocopy a b /MIR")
@@ -429,7 +433,7 @@ fn bash_suggests_history() {
     };
     term.send(b"echo eas");
     term.wait_for("la commande de l'historique", |t| {
-        t.screen().contains("echo easytab-history-test")
+        t.screen().contains("echo easytab-history-test") && t.cursor_line() == "$ echo eas"
     });
     term.send(b"\t");
     term.wait_for("la ligne complétée", |t| {
@@ -552,7 +556,7 @@ fn bash_suggests_make_targets() {
     };
     term.send(b"make easytab-c");
     term.wait_for("la cible du Makefile", |t| {
-        t.screen().contains("Cible de test")
+        t.screen().contains("Cible de test") && t.cursor_line().ends_with("make easytab-c")
     });
     term.send(b"\t");
     term.wait_for("la ligne complétée", |t| {
