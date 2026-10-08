@@ -607,6 +607,7 @@ dependencies = [
  "embed-resource",
  "serde",
  "serde_json",
+ "sha2",
  "toml 0.9.12+spec-1.1.0",
  "windows-sys 0.61.2",
 ]

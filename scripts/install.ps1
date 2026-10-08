@@ -51,14 +51,32 @@ function Get-GitHubToken {
 # Dépôt privé : le lien direct répond 404. On télécharge alors par l'API
 # GitHub avec le jeton. curl.exe (fourni avec Windows 10 et 11) suit la
 # redirection vers le stockage de GitHub sans y renvoyer le jeton.
-function Get-PrivateAsset($dest) {
+function Get-PrivateAsset($name, $dest) {
     $token = Get-GitHubToken
     if (-not $token) { return $false }
     $headers = @{ Authorization = "Bearer $token"; 'User-Agent' = 'easytab-install' }
     $info = Invoke-RestMethod "https://api.github.com/repos/$repo/releases/$release" -Headers $headers -UseBasicParsing
-    $found = $info.assets | Where-Object { $_.name -eq $asset } | Select-Object -First 1
+    $found = $info.assets | Where-Object { $_.name -eq $name } | Select-Object -First 1
     if (-not $found) { return $false }
     & curl.exe -fsSL -H "Authorization: Bearer $token" -H 'Accept: application/octet-stream' -H 'User-Agent: easytab-install' -o $dest $found.url
+    return ($LASTEXITCODE -eq 0)
+}
+
+# Downloads a release asset: direct link first, then the GitHub API (private
+# repository), then gh. Returns $false if every way failed.
+function Get-Asset($name, $dest) {
+    $direct = $url.Substring(0, $url.LastIndexOf('/') + 1) + $name
+    try {
+        Invoke-WebRequest $direct -OutFile $dest -UseBasicParsing
+        return $true
+    } catch {}
+    try {
+        if (Get-PrivateAsset $name $dest) { return $true }
+    } catch {}
+    if (-not (Get-Command gh -ErrorAction SilentlyContinue)) { return $false }
+    $tag = @()
+    if ($env:EASYTAB_VERSION) { $tag = @($env:EASYTAB_VERSION) }
+    & gh release download @tag -R $repo -p $name -O $dest 2>$null
     return ($LASTEXITCODE -eq 0)
 }
 
@@ -67,23 +85,32 @@ New-Item -ItemType Directory $tmp | Out-Null
 try {
     $zip = "$tmp\easytab.zip"
     Write-Host (Tr "Downloading $url" "T${e}l${e}chargement de $url")
-    try {
-        Invoke-WebRequest $url -OutFile $zip -UseBasicParsing
-    } catch {
-        Write-Host (Tr "Direct link unavailable (private repository?), downloading with your GitHub credentials" `
-            "Lien direct indisponible (d${e}p$([char]0xF4)t priv${e} ?), t${e}l${e}chargement avec tes identifiants GitHub")
-        if (-not (Get-PrivateAsset $zip)) {
-            if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
-                throw (Tr "Download failed. Private repository: connect git to GitHub, or set `$env:GITHUB_TOKEN." `
-                    "T${e}l${e}chargement impossible. D${e}p$([char]0xF4)t priv${e} : connecte git $a GitHub, ou d${e}finis `$env:GITHUB_TOKEN.")
-            }
-            $tag = @()
-            if ($env:EASYTAB_VERSION) { $tag = @($env:EASYTAB_VERSION) }
-            & gh release download @tag -R $repo -p $asset -O $zip
-            if ($LASTEXITCODE -ne 0) {
-                throw (Tr "gh release download failed ($LASTEXITCODE)." "gh release download a ${e}chou${e} ($LASTEXITCODE).")
+    if (-not (Get-Asset $asset $zip)) {
+        throw (Tr "Download failed. Private repository: connect git to GitHub, or set `$env:GITHUB_TOKEN." `
+            "T${e}l${e}chargement impossible. D${e}p$([char]0xF4)t priv${e} : connecte git $a GitHub, ou d${e}finis `$env:GITHUB_TOKEN.")
+    }
+    # Check the archive against the release's SHA256SUMS before extracting
+    # it. Releases before SHA256SUMS existed (v0.1.11 and older): warn and
+    # go on.
+    $sums = "$tmp\SHA256SUMS"
+    if (Get-Asset 'SHA256SUMS' $sums) {
+        $expected = $null
+        foreach ($line in Get-Content $sums) {
+            $parts = $line.Trim() -split '\s+', 2
+            if ($parts.Count -eq 2 -and $parts[1].TrimStart('*') -eq $asset) {
+                $expected = $parts[0].ToLower()
+                break
             }
         }
+        $actual = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
+        if ($expected -ne $actual) {
+            throw (Tr "$asset does not match its SHA-256 in SHA256SUMS (download corrupted or tampered with). Nothing was installed." `
+                "$asset ne correspond pas $a son SHA-256 dans SHA256SUMS (t${e}l${e}chargement corrompu ou modifi${e}). Rien n'a ${e}t${e} install${e}.")
+        }
+        Write-Host (Tr 'SHA-256 checked' "SHA-256 v${e}rifi${e}")
+    } else {
+        Write-Warning (Tr 'No SHA256SUMS in this release, archive not checked' `
+            "Pas de SHA256SUMS dans cette version, archive non v${e}rifi${e}e")
     }
     Expand-Archive $zip -DestinationPath $tmp
     $easytab = "$tmp\easytab-$target\easytab.exe"

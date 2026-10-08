@@ -2,17 +2,22 @@
 //! réinstalle. Comme les scripts d'installation, il passe par `curl` et `tar`
 //! (fournis par Windows 10+, macOS et Linux), et par l'API GitHub avec un
 //! jeton quand le dépôt est privé.
+//! The archive is checked against the release's `SHA256SUMS` before it is
+//! extracted.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use anyhow::{bail, Context, Result};
 use serde::Deserialize;
+use sha2::{Digest, Sha256};
 
 // La fonction `tr` (importée à la racine) et la macro `tr!`.
 use crate::tr;
 
 const REPO: &str = "AdamSellin/EasyTab";
+/// Release asset listing the SHA-256 of the other assets (`sha256sum` format).
+const CHECKSUMS: &str = "SHA256SUMS";
 
 #[derive(Deserialize)]
 struct Release {
@@ -131,6 +136,45 @@ fn curl(token: Option<&str>, accept: &str, url: &str, output: Option<&Path>) -> 
     Ok(result.stdout)
 }
 
+/// Expected hash of `name` in a `sha256sum` listing (`<hex>  <name>`, or
+/// `<hex> *<name>` in binary mode).
+fn expected_hash(sums: &str, name: &str) -> Option<String> {
+    sums.lines().find_map(|line| {
+        let (hash, file) = line.trim_end().split_once(char::is_whitespace)?;
+        let file = file.trim_start().trim_start_matches('*');
+        (file == name && hash.len() == 64 && hash.bytes().all(|b| b.is_ascii_hexdigit()))
+            .then(|| hash.to_ascii_lowercase())
+    })
+}
+
+fn sha256_hex(data: &[u8]) -> String {
+    Sha256::digest(data)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+/// Fails unless `file` has the hash `SHA256SUMS` gives for `name`.
+fn verify(file: &Path, name: &str, sums: &str) -> Result<()> {
+    let expected = expected_hash(sums, name).with_context(|| {
+        tr!(
+            "{name} missing from {CHECKSUMS}",
+            "{name} absent de {CHECKSUMS}"
+        )
+    })?;
+    let data = std::fs::read(file).with_context(|| {
+        let file = file.display();
+        tr!("reading {file}", "lecture de {file}")
+    })?;
+    if sha256_hex(&data) != expected {
+        bail!(tr!(
+            "{name} does not match its SHA-256 in {CHECKSUMS}: download corrupted or tampered with, nothing was installed",
+            "{name} ne correspond pas à son SHA-256 dans {CHECKSUMS} : téléchargement corrompu ou modifié, rien n'a été installé"
+        ));
+    }
+    Ok(())
+}
+
 /// Dernière version publiée, et le jeton qui a permis de la lire (dépôt privé).
 fn latest_release() -> Result<(Release, Option<String>)> {
     let url = format!("https://api.github.com/repos/{REPO}/releases/latest");
@@ -187,6 +231,16 @@ pub fn run(force: bool, installed_shells: &[&str]) -> Result<()> {
                 "{name} absent de la version {tag}"
             )
         })?;
+    let checksums = release
+        .assets
+        .iter()
+        .find(|asset| asset.name == CHECKSUMS)
+        .with_context(|| {
+            tr!(
+                "{CHECKSUMS} missing from version {tag}: cannot check the download",
+                "{CHECKSUMS} absent de la version {tag} : impossible de vérifier le téléchargement"
+            )
+        })?;
 
     let dir = std::env::temp_dir().join(format!("easytab-update-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
@@ -194,7 +248,14 @@ pub fn run(force: bool, installed_shells: &[&str]) -> Result<()> {
         let dir = dir.display();
         tr!("creating {dir}", "création de {dir}")
     })?;
-    let result = download_and_install(&dir, asset, token.as_deref(), target, installed_shells);
+    let result = download_and_install(
+        &dir,
+        asset,
+        checksums,
+        token.as_deref(),
+        target,
+        installed_shells,
+    );
     let _ = std::fs::remove_dir_all(&dir);
     result?;
     println!(
@@ -207,20 +268,13 @@ pub fn run(force: bool, installed_shells: &[&str]) -> Result<()> {
     Ok(())
 }
 
-fn download_and_install(
-    dir: &Path,
-    asset: &Asset,
-    token: Option<&str>,
-    target: &str,
-    installed_shells: &[&str],
-) -> Result<()> {
-    let archive = dir.join(&asset.name);
-    let name = &asset.name;
-    println!("{}", tr!("Downloading {name}", "Téléchargement de {name}"));
-    // Lien direct d'abord ; dépôt privé : par l'API, avec un jeton.
+/// Downloads `asset` into `dir`: direct link first; private repository:
+/// through the API, with a token.
+fn download(dir: &Path, asset: &Asset, token: Option<&str>) -> Result<PathBuf> {
+    let file = dir.join(&asset.name);
     let direct = match token {
         Some(_) => None,
-        None => curl(None, "*/*", &asset.browser_download_url, Some(&archive)).ok(),
+        None => curl(None, "*/*", &asset.browser_download_url, Some(&file)).ok(),
     };
     if direct.is_none() {
         let token = token.map(str::to_string).or_else(github_token);
@@ -228,10 +282,27 @@ fn download_and_install(
             token.as_deref(),
             "application/octet-stream",
             &asset.url,
-            Some(&archive),
+            Some(&file),
         )
         .context(private_repo())?;
     }
+    Ok(file)
+}
+
+fn download_and_install(
+    dir: &Path,
+    asset: &Asset,
+    checksums: &Asset,
+    token: Option<&str>,
+    target: &str,
+    installed_shells: &[&str],
+) -> Result<()> {
+    let name = &asset.name;
+    println!("{}", tr!("Downloading {name}", "Téléchargement de {name}"));
+    let archive = download(dir, asset, token)?;
+    let sums = std::fs::read_to_string(download(dir, checksums, token)?)
+        .with_context(|| tr!("{CHECKSUMS} unreadable", "{CHECKSUMS} illisible"))?;
+    verify(&archive, name, &sums)?;
     let status = Command::new(system_tool("tar"))
         .arg("-xf")
         .arg(&archive)
@@ -313,5 +384,41 @@ mod tests {
         .unwrap();
         assert_eq!(release.tag_name, "v0.1.1");
         assert_eq!(release.assets[0].name, "install.sh");
+    }
+
+    #[test]
+    fn reads_sha256sums() {
+        let a = "a".repeat(64);
+        let b = "B".repeat(64);
+        let sums = format!(
+            "{a}  easytab-x.zip
+{b} *easytab-y.tar.gz
+not a line
+"
+        );
+        assert_eq!(expected_hash(&sums, "easytab-x.zip"), Some(a));
+        assert_eq!(
+            expected_hash(&sums, "easytab-y.tar.gz"),
+            Some("b".repeat(64))
+        );
+        assert_eq!(expected_hash(&sums, "easytab-z.zip"), None);
+        // Short hash: ignored.
+        assert_eq!(expected_hash("abc  easytab-x.zip", "easytab-x.zip"), None);
+    }
+
+    #[test]
+    fn checks_the_archive_hash() {
+        let dir = std::env::temp_dir().join(format!("easytab-verify-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("easytab-x.zip");
+        std::fs::write(&file, b"abc").unwrap();
+        // SHA-256 of "abc".
+        let good = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+        assert_eq!(sha256_hex(b"abc"), good);
+        assert!(verify(&file, "easytab-x.zip", &format!("{good}  easytab-x.zip")).is_ok());
+        let bad = "0".repeat(64);
+        assert!(verify(&file, "easytab-x.zip", &format!("{bad}  easytab-x.zip")).is_err());
+        assert!(verify(&file, "easytab-x.zip", "").is_err());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

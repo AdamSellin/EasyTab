@@ -45,6 +45,7 @@ archive="$tmp/easytab.tar.gz"
 
 # Dépôt privé : le lien direct répond 404. On télécharge alors par l'API
 # GitHub avec un jeton : $GITHUB_TOKEN, ou celui que git utilise déjà.
+# Usage: private_download <asset> <file>
 private_download() {
   token="${GITHUB_TOKEN:-}"
   if [ -z "$token" ] && command -v git >/dev/null 2>&1; then
@@ -54,26 +55,48 @@ private_download() {
   [ -n "$token" ] || return 1
   asset_url="$(curl -fsSL -H "Authorization: Bearer $token" \
       "https://api.github.com/repos/$repo/releases/$release" \
-    | tr -d '\n' | sed 's/}, *{/}\n{/g' | grep "\"name\": *\"$asset\"" \
+    | tr -d '\n' | sed 's/}, *{/}\n{/g' | grep "\"name\": *\"$1\"" \
     | sed -n 's/.*"url": *"\(https:[^"]*\/releases\/assets\/[0-9]*\)".*/\1/p' | head -n 1)"
   [ -n "$asset_url" ] || return 1
   curl -fsSL -H "Authorization: Bearer $token" -H "Accept: application/octet-stream" \
-    "$asset_url" -o "$archive"
+    "$asset_url" -o "$2"
+}
+
+# Usage: fetch <asset> <file>. Direct link first, then the GitHub API
+# (private repository), then gh. Returns 1 if every way failed.
+fetch() {
+  curl -fsSL "${url%/*}/$1" -o "$2" 2>/dev/null && return 0
+  private_download "$1" "$2" && return 0
+  command -v gh >/dev/null 2>&1 \
+    && gh release download ${EASYTAB_VERSION:-} -R "$repo" -p "$1" -O "$2" 2>/dev/null
 }
 
 say "Downloading $url" "Téléchargement de $url"
-if ! curl -fsSL "$url" -o "$archive" 2>/dev/null; then
-  say "Direct link unavailable (private repository?), downloading with your GitHub credentials" \
-    "Lien direct indisponible (dépôt privé ?), téléchargement avec tes identifiants GitHub"
-  if ! private_download; then
-    if command -v gh >/dev/null 2>&1; then
-      gh release download ${EASYTAB_VERSION:-} -R "$repo" -p "$asset" -O "$archive"
-    else
-      say "easytab: download failed. Private repository: connect git to GitHub, or set GITHUB_TOKEN." \
-        "easytab : téléchargement impossible. Dépôt privé : connecte git à GitHub, ou définis GITHUB_TOKEN." >&2
-      exit 1
-    fi
+if ! fetch "$asset" "$archive"; then
+  say "easytab: download failed. Private repository: connect git to GitHub, or set GITHUB_TOKEN." \
+    "easytab : téléchargement impossible. Dépôt privé : connecte git à GitHub, ou définis GITHUB_TOKEN." >&2
+  exit 1
+fi
+
+# Check the archive against the release's SHA256SUMS before extracting it.
+# Releases before SHA256SUMS existed (v0.1.11 and older): warn and go on.
+sums="$tmp/SHA256SUMS"
+if fetch SHA256SUMS "$sums"; then
+  expected="$(awk -v f="$asset" '$2 == f || $2 == "*" f { print tolower($1); exit }' "$sums")"
+  if command -v sha256sum >/dev/null 2>&1; then
+    actual="$(sha256sum < "$archive" | cut -d' ' -f1)"
+  else
+    actual="$(shasum -a 256 < "$archive" | cut -d' ' -f1)"
   fi
+  if [ -z "$expected" ] || [ "$expected" != "$actual" ]; then
+    say "easytab: $asset does not match its SHA-256 in SHA256SUMS (download corrupted or tampered with). Nothing was installed." \
+      "easytab : $asset ne correspond pas à son SHA-256 dans SHA256SUMS (téléchargement corrompu ou modifié). Rien n'a été installé." >&2
+    exit 1
+  fi
+  say "SHA-256 checked" "SHA-256 vérifié"
+else
+  say "easytab: no SHA256SUMS in this release, archive not checked" \
+    "easytab : pas de SHA256SUMS dans cette version, archive non vérifiée" >&2
 fi
 tar xzf "$archive" -C "$tmp"
 

@@ -245,6 +245,8 @@ est lu à l'ouverture du terminal ; `easytab doctor` y signale une erreur.
 Le script d'installation copie `easytab`, `easytab-term` et `easytab-overlay` dans
 `~/.easytab/bin` et ajoute EasyTab à la config du shell, qui met aussi ce dossier dans le PATH.
 Relancer la même commande met à jour ; `easytab update` aussi, pour les shells déjà configurés.
+Chaque version publie un `SHA256SUMS` : les scripts d'installation et `easytab update`
+vérifient l'archive avant de la décompresser (une archive différente arrête l'installation).
 Les anciennes versions mises de côté par une mise à jour (`*.old-…` dans `~/.easytab/bin`) sont
 effacées au lancement suivant d'un terminal.
 
