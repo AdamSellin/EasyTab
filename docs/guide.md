@@ -255,7 +255,8 @@ avec Git for Windows ; sans lui, le shell s'y lance sans EasyTab, avec un messag
 
 PowerShell : le profil charge `~/.easytab/bin/easytab-profile.ps1` (`. 'chemin'`), copié par
 `easytab install --shell pwsh` depuis l'archive ; `easytab init pwsh` l'affiche encore pour les
-profils d'avant ce fichier. Il ne contient aucun chemin, pour que la version publiée soit signée.
+profils d'avant ce fichier. Il ne contient aucun chemin, pour que la version publiée puisse être
+signée.
 
 ### PC d'entreprise
 
@@ -267,8 +268,8 @@ d'exécution `AllSigned` ou `Restricted` refuse les scripts. Sans script :
 2. dans le dossier extrait : `.\easytab.exe install --shell pwsh` (et `--shell bash` pour Git
    Bash), puis ouvrir un nouveau terminal.
 
-Avec `AllSigned`, il faut la version signée (voir plus bas) : `easytab-profile.ps1` est alors signé lui
-aussi. Si l'antivirus bloque quand même un programme, le signaler comme faux positif
+Avec `AllSigned`, les scripts doivent être signés, ce que les versions ne sont pas encore (voir
+plus bas). Si l'antivirus bloque quand même un programme, le signaler comme faux positif
 (Microsoft : <https://www.microsoft.com/wdsi/filesubmission>) ou demander au service informatique
 d'autoriser l'éditeur.
 
@@ -277,9 +278,12 @@ le nom de la version (`v0.2.0`), ou `git tag v0.2.0 && git push origin v0.2.0`. 
 compile pour Linux, macOS (Intel et Apple Silicon) et Windows, puis publie les archives et les
 scripts d'installation.
 
-**Signature (Windows)** : le workflow fait signer par [SignPath](https://signpath.org) (gratuit
-pour l'open source) les trois `.exe`, `easytab-profile.ps1` et `install.ps1`, dès que le dépôt a la
-variable `SIGNPATH_ORGANIZATION_ID` ; sans elle, la version sort non signée. À régler une fois :
+**Signature (Windows)** : les versions ne sont pas signées. SignPath Foundation (signature
+gratuite pour l'open source) a refusé le projet en octobre 2026, trop récent et pas encore assez
+connu ; une nouvelle demande est possible plus tard, sur [signpath.org](https://signpath.org).
+Le workflow est prêt : il fait signer par SignPath (Foundation ou abonnement payant) les trois
+`.exe`, `easytab-profile.ps1` et `install.ps1` dès que le dépôt a la variable
+`SIGNPATH_ORGANIZATION_ID` ; sans elle, la version sort non signée. À régler une fois :
 
 - dans SignPath : activer le système de compilation de confiance « GitHub.com » et le lier au
   projet ; configuration d'artefact du projet : `.signpath/artifact-configuration.xml` ;

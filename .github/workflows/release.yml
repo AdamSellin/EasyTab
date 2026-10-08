@@ -59,11 +59,12 @@ jobs:
           mkdir "$name"
           cp target/${{ matrix.target }}/release/easytab target/${{ matrix.target }}/release/easytab-term target/${{ matrix.target }}/release/easytab-overlay README.md LICENSE "$name"/
           tar czf "$name.tar.gz" "$name"
-      # Windows : programmes et scripts PowerShell, signés par SignPath
-      # (gratuit pour l'open source) si les variables SIGNPATH_* du dépôt
-      # sont définies. Signés, les antivirus et les politiques d'exécution
-      # (AllSigned) des PC d'entreprise les acceptent mieux. Configuration de
-      # l'artefact : .signpath/artifact-configuration.xml.
+      # Windows: programs and PowerShell scripts, signed by SignPath when the
+      # repository has the SIGNPATH_* variables (not set yet: the free
+      # Foundation program turned the project down in October 2026). Signed
+      # files get past antivirus software and AllSigned execution policies
+      # on corporate PCs more easily. Artifact configuration:
+      # .signpath/artifact-configuration.xml.
       - name: Windows files
         if: runner.os == 'Windows'
         shell: pwsh

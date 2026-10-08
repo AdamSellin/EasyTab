@@ -86,15 +86,11 @@ Messages are in English, or in French if your system is (`EASYTAB_LANG=en` to fo
 Everything else (settings, custom specs, building from source) is in the
 [guide](docs/guide.md) (in French for now).
 
-## Code signing policy
+## Code signing and privacy
 
-Free code signing provided by [SignPath.io](https://about.signpath.io), certificate by
-[SignPath Foundation](https://signpath.org). The Windows programs and PowerShell scripts of each
-release are built and signed by the [Release workflow](.github/workflows/release.yml) on
-GitHub-hosted runners. Signing is being set up: current releases are not signed yet.
-
-- Committers and reviewers: [Adam Sellin](https://github.com/AdamSellin)
-- Approvers: [Adam Sellin](https://github.com/AdamSellin)
+Windows releases are not code-signed yet. They are built by the
+[Release workflow](.github/workflows/release.yml) on GitHub-hosted runners, from the tagged
+source.
 
 Privacy: this program will not transfer any information to other networked systems unless
 specifically requested by the user or the person installing or operating it. Only
