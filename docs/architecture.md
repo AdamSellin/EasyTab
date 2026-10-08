@@ -1,7 +1,7 @@
 # EasyTab architecture
 
 How EasyTab is built today (version 0.1.x). For installing, settings and the folder layout, see
-[guide.md](guide.md).
+[the guide](guide/en/README.md).
 
 ## Overview
 

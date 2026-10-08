@@ -58,8 +58,8 @@ irm https://github.com/AdamSellin/EasyTab/releases/latest/download/install.ps1 |
 </p>
 
 Then open a new terminal. To update: `easytab update`.
-On a company PC that blocks the script: [install without it](docs/guide.md#pc-dentreprise) (in
-French): download the Windows zip, then run `.\easytab.exe install --shell pwsh` from it.
+On a company PC that blocks the script, [install without it](docs/guide/en/install.md#company-pcs):
+download the Windows zip, then run `.\easytab.exe install --shell pwsh` from it.
 
 ## Use
 
@@ -84,7 +84,7 @@ French): download the Windows zip, then run `.\easytab.exe install --shell pwsh`
 Messages are in English, or in French if your system is (`EASYTAB_LANG=en` to force English).
 
 Everything else (settings, custom specs, building from source) is in the
-[guide](docs/guide.md) (in French for now).
+[guide](docs/guide/en/README.md).
 
 ## Code signing and privacy
 

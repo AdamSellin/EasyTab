@@ -358,19 +358,29 @@ mod tests {
         assert!(errors.iter().any(|e| e.contains("faux.json")));
         assert!(custom(&dir.join("absent")).0.is_empty());
 
-        // L'exemple du guide est valide.
-        let guide = include_str!("../../../docs/guide.md");
-        let example = guide
-            .split("### Specs personnelles")
-            .nth(1)
-            .and_then(|s| s.split("```json").nth(1))
-            .and_then(|s| s.split("```").next())
-            .expect("exemple de spec dans le guide");
-        std::fs::write(dir.join("a.json"), example).unwrap();
-        let (specs, _) = custom(&dir);
-        let deploy = specs[0].command();
-        assert_eq!(deploy.subcommands[0].args[0].suggestions[1].names, ["prod"]);
-        assert_eq!(deploy.options[1].args[0].templates, [Template::Filepaths]);
+        // The guide's example is valid, in both languages.
+        for (guide, heading) in [
+            (
+                include_str!("../../../docs/guide/en/suggestions.md"),
+                "## Custom specs",
+            ),
+            (
+                include_str!("../../../docs/guide/fr/suggestions.md"),
+                "## Specs personnelles",
+            ),
+        ] {
+            let example = guide
+                .split(heading)
+                .nth(1)
+                .and_then(|s| s.split("```json").nth(1))
+                .and_then(|s| s.split("```").next())
+                .expect("spec example in the guide");
+            std::fs::write(dir.join("a.json"), example).unwrap();
+            let (specs, _) = custom(&dir);
+            let deploy = specs[0].command();
+            assert_eq!(deploy.subcommands[0].args[0].suggestions[1].names, ["prod"]);
+            assert_eq!(deploy.options[1].args[0].templates, [Template::Filepaths]);
+        }
         let _ = std::fs::remove_dir_all(&dir);
     }
 
