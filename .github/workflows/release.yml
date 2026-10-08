@@ -132,10 +132,18 @@ jobs:
           path: dist
           pattern: easytab-*
           merge-multiple: true
+      # SHA-256 of every asset, checked by `easytab update` and the install
+      # scripts before anything is extracted.
+      - name: Checksums
+        run: |
+          cp scripts/install.sh dist/
+          cd dist
+          sha256sum -- * > SHA256SUMS
+          cat SHA256SUMS
       - name: Publish the release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           # dist/install.ps1 vient du job Windows (signé si SignPath est configuré).
-          gh release create "$TAG" dist/* scripts/install.sh \
+          gh release create "$TAG" dist/* \
             --target "$GITHUB_SHA" --title "EasyTab $TAG" --generate-notes

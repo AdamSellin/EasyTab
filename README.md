@@ -94,7 +94,8 @@ source.
 
 Privacy: this program will not transfer any information to other networked systems unless
 specifically requested by the user or the person installing or operating it. Only
-`easytab update` contacts GitHub, to download the latest release.
+`easytab update` contacts GitHub, to download the latest release; it checks the archive
+against the release's `SHA256SUMS` before installing it.
 
 ## License
 

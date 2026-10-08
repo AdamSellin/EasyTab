@@ -96,7 +96,8 @@ sources de la version.
 
 Confidentialité : ce programme n'envoie aucune information à d'autres systèmes en réseau, sauf à
 la demande expresse de l'utilisateur ou de la personne qui l'installe ou l'utilise. Seul
-`easytab update` contacte GitHub, pour télécharger la dernière version.
+`easytab update` contacte GitHub, pour télécharger la dernière version ; il vérifie l'archive
+avec le `SHA256SUMS` de la version avant de l'installer.
 
 ## Licence
 
