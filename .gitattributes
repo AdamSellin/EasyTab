@@ -1,1 +1,9 @@
 specs/*.json.z binary linguist-generated=true
+
+# Shell scripts stay LF in every checkout, Windows included: Linux bash
+# rejects CRLF (`$'\r': command not found`), for instance when a repository
+# cloned on Windows is built or tested from WSL. They are embedded in the
+# binaries with include_str!, so this also keeps Windows builds identical.
+*.sh   text eol=lf
+*.bash text eol=lf
+*.zsh  text eol=lf
