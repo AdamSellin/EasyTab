@@ -64,6 +64,17 @@ struct Shared {
 }
 
 impl Shared {
+    /// Brings the list up to date with the line, without drawing it. A key
+    /// typed right after the last letter can arrive before the list was
+    /// recomputed: Tab would then insert a suggestion for the previous word
+    /// (`/mir` + Tab gave `//MIN:`, from the list of `/mi`).
+    fn sync_popup(&mut self) {
+        if self.session.at_boundary() {
+            self.popup
+                .update(&self.session, &self.completer, &self.fallback_cwd);
+        }
+    }
+
     /// Recalcule et redessine la liste si l'écran est dans un état stable.
     fn refresh(&mut self, frame: &mut Vec<u8>) {
         if !self.session.at_boundary() {
@@ -325,6 +336,7 @@ fn run(args: Args) -> Result<i32> {
             let mut to_shell = data.to_vec();
             if Key::parse(data).is_some() {
                 wait_for_echo(&input_shared);
+                input_shared.lock().unwrap().sync_popup();
             }
             {
                 let mut shared = input_shared.lock().unwrap();
