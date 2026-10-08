@@ -3,6 +3,7 @@ name = "easytab-cli"
 description = "Commande easytab : installation, désinstallation et diagnostic"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 

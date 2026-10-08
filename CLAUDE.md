@@ -11,7 +11,10 @@ Avant chaque push, comme la CI (`.github/workflows/ci.yml`) :
 cargo fmt --all --check
 cargo clippy --all-targets -- -D warnings
 cargo test
+cargo deny check advisories licenses sources   # deny.toml ; aussi chaque lundi en CI
 ```
+
+`rust-version` (1.88) : à relever avec la CI (`msrv` dans `ci.yml`) quand une dépendance l'exige.
 
 - `crates/easytab-term/tests/e2e.rs` lance vraiment `easytab-term` dans un pseudo-terminal (bash
   sous Linux, PowerShell et Git Bash sous Windows), tape `git checko`, Tab, ↓, Entrée, Échap.

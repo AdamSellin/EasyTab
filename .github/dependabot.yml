@@ -1,0 +1,22 @@
+version: 2
+updates:
+  # Rust dependencies: one grouped PR a week for minor and patch updates;
+  # major updates get their own PR.
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      rust-minor:
+        update-types: [minor, patch]
+    commit-message:
+      prefix: "Deps"
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: "CI"

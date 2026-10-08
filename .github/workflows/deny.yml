@@ -1,0 +1,21 @@
+name: Dependencies
+
+# Known vulnerabilities (RustSec), licenses and sources of the dependencies,
+# see deny.toml. Also runs every Monday: a new advisory can hit an unchanged
+# Cargo.lock.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "0 6 * * 1"
+
+jobs:
+  cargo-deny:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check advisories, licenses and sources
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check advisories licenses sources

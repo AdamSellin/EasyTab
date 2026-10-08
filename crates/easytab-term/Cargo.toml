@@ -3,6 +3,7 @@ name = "easytab-term"
 description = "Wrapper PTY qui s'intercale entre le terminal et le shell"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 
