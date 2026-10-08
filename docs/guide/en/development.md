@@ -45,7 +45,7 @@ Rust 1.88 at least (`rust-version` in `Cargo.toml`, checked by the CI).
 | `crates/easytab-overlay` | Floating window, placed under the terminal's cursor. |
 | `crates/easytab-cli` | The `easytab` command: `install`, `uninstall`, `update`, `config`, `doctor`, `init`. |
 | `shell-integration/` | zsh, bash and PowerShell scripts that restart the shell under `easytab-term` and emit the prompt markers. |
-| `specs/` | Completion specs imported from Fig, and those of the Windows tools (`windows.json`). |
+| `specs/` | Completion specs imported from Fig, those of the Windows tools (`windows.json`) and of `easytab` itself (`easytab.json`). |
 | `tools/` | Script that imports the Fig specs. |
 
 The architecture and its design choices are described in [architecture.md](../../architecture.md).

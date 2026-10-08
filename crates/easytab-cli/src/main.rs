@@ -746,6 +746,53 @@ mod tests {
         assert!(Shell::from_env("/usr/bin/fish", true).is_err());
     }
 
+    /// `specs/easytab.json` (EasyTab's completion of its own command) lists
+    /// every subcommand, option and shell of the clap definition.
+    #[test]
+    fn easytab_spec_matches_the_command() {
+        use clap::CommandFactory;
+        let spec: serde_json::Value =
+            serde_json::from_str(include_str!("../../../specs/easytab.json")).unwrap();
+        let spec = &spec["specs"][0];
+        let names = |list: &serde_json::Value| -> Vec<String> {
+            list.as_array()
+                .into_iter()
+                .flatten()
+                .flat_map(|item| item["names"].as_array().cloned().unwrap_or_default())
+                .filter_map(|name| name.as_str().map(str::to_string))
+                .collect()
+        };
+        let shells: Vec<String> = Shell::ALL.iter().map(|s| s.name().to_string()).collect();
+        for command in Cli::command().get_subcommands() {
+            let name = command.get_name();
+            let sub = spec["subcommands"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|s| names(&serde_json::json!([s])).contains(&name.to_string()))
+                .unwrap_or_else(|| panic!("`{name}` missing from specs/easytab.json"));
+            for arg in command.get_arguments() {
+                let id = arg.get_id().as_str();
+                let values = match arg.get_long() {
+                    Some(long) => {
+                        let option = sub["options"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .find(|o| names(&serde_json::json!([o])).contains(&format!("--{long}")))
+                            .unwrap_or_else(|| panic!("`{name} --{long}` missing"));
+                        option["args"][0]["suggestions"].clone()
+                    }
+                    None => sub["args"][0]["suggestions"].clone(),
+                };
+                if id == "shell" {
+                    assert_eq!(names(&values), shells, "shells of `{name}`");
+                }
+            }
+        }
+        assert!(names(&spec["subcommands"]).contains(&"help".to_string()));
+    }
+
     #[test]
     fn powershell_loads_the_script_file() {
         let exe = Path::new("C:\\Users\\a'b\\.easytab\\bin\\easytab.exe");

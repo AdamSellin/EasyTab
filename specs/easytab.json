@@ -1,0 +1,85 @@
+{
+  "specs": [
+    {
+      "names": ["easytab"],
+      "description": "Graphical autocomplete for the terminal",
+      "options": [
+        {"names": ["-h", "--help"], "description": "Print help", "persistent": true},
+        {"names": ["-V", "--version"], "description": "Print version"}
+      ],
+      "subcommands": [
+        {
+          "names": ["config"],
+          "description": "Create the settings file (~/.easytab/config.toml) if needed and print its path"
+        },
+        {
+          "names": ["workflows"],
+          "description": "Create the workflows file (~/.easytab/workflows.toml) if needed and print its path"
+        },
+        {
+          "names": ["doctor"],
+          "description": "Check the installation"
+        },
+        {
+          "names": ["update"],
+          "description": "Install the latest published version",
+          "options": [
+            {"names": ["--force"], "description": "Reinstall even if the version is already the latest"}
+          ]
+        },
+        {
+          "names": ["install"],
+          "description": "Enable EasyTab in the shell's config file",
+          "options": [
+            {
+              "names": ["--shell"],
+              "description": "Shell to configure (default: the one in $SHELL)",
+              "args": [{"name": "shell", "suggestions": [
+                {"names": ["zsh"]},
+                {"names": ["bash"]},
+                {"names": ["pwsh"], "description": "PowerShell 7 (pwsh) and Windows PowerShell 5"}
+              ]}]
+            }
+          ]
+        },
+        {
+          "names": ["uninstall"],
+          "description": "Remove EasyTab from the shell's config file",
+          "options": [
+            {
+              "names": ["--shell"],
+              "description": "Shell to configure (default: the one in $SHELL)",
+              "args": [{"name": "shell", "suggestions": [
+                {"names": ["zsh"]},
+                {"names": ["bash"]},
+                {"names": ["pwsh"], "description": "PowerShell 7 (pwsh) and Windows PowerShell 5"}
+              ]}]
+            }
+          ]
+        },
+        {
+          "names": ["init"],
+          "description": "Print a shell's integration script (used by the shell's config file)",
+          "args": [{"name": "shell", "suggestions": [
+            {"names": ["zsh"]},
+            {"names": ["bash"]},
+            {"names": ["pwsh"], "description": "PowerShell 7 (pwsh) and Windows PowerShell 5"}
+          ]}]
+        },
+        {
+          "names": ["help"],
+          "description": "Print help for a subcommand",
+          "args": [{"name": "subcommand", "optional": true, "suggestions": [
+            {"names": ["config"]},
+            {"names": ["workflows"]},
+            {"names": ["doctor"]},
+            {"names": ["update"]},
+            {"names": ["install"]},
+            {"names": ["uninstall"]},
+            {"names": ["init"]}
+          ]}]
+        }
+      ]
+    }
+  ]
+}

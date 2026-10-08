@@ -62,12 +62,14 @@ typed, then lists what can replace the current word. Sources, in order:
 
 1. User specs in `~/.easytab/specs` (`spec::custom`).
 2. On Windows, hand-written specs for Windows tools (`specs/windows.json`).
-3. Fig specs, imported by `tools/import-fig-specs.mjs` and embedded compressed
+3. The hand-written spec of the `easytab` command itself (`specs/easytab.json`), checked against
+   its clap definition by a test of `easytab-cli`.
+4. Fig specs, imported by `tools/import-fig-specs.mjs` and embedded compressed
    (`specs/specs.json.z`, `loadable.json.z`, `modules.json.z`).
-4. PowerShell commands described by PowerShell itself (`pwsh.rs`, cached in
+5. PowerShell commands described by PowerShell itself (`pwsh.rs`, cached in
    `~/.easytab/cache/powershell.json`).
-5. fish (`complete -C`) and bash-completion (`shell.rs`).
-6. The command's `--help` output (`help.rs`, cached in `~/.easytab/cache/help.json`).
+6. fish (`complete -C`) and bash-completion (`shell.rs`).
+7. The command's `--help` output (`help.rs`, cached in `~/.easytab/cache/help.json`).
 
 Other suggestion kinds: files and folders (`files.rs`), values read from project files where the Fig
 generators do nothing or need `bash`/`cat` (`project.rs`: Makefile, package.json, composer.json,

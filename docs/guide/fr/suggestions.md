@@ -13,6 +13,9 @@ Elles passent avant celles de Fig (dont `ping` et `where` décrivent les version
 options en `/` sont complétées sans tenir compte de la casse (`/mir` vaut `/MIR`), avec leur
 valeur collée (`/LOG:journal.txt`, `/FeatureName:…`).
 
+**EasyTab lui-même.** `easytab` complète ses propres sous-commandes et options (`easytab install
+--shell pwsh`…), décrites dans `specs/easytab.json`.
+
 **Historique.** Les commandes déjà tapées qui prolongent la ligne en cours passent
 en tête (`docker-compose u` → `docker-compose up -d --build`, icône d'horloge), tirées de
 l'historique du shell (`~/.bash_history`, `~/.zsh_history`, historique PSReadLine de PowerShell).
