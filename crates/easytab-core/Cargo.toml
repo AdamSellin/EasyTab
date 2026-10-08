@@ -3,6 +3,7 @@ name = "easytab-core"
 description = "Suivi de la ligne en cours et moteur de suggestions d'EasyTab"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 

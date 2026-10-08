@@ -3,6 +3,7 @@ name = "easytab-overlay"
 description = "Fenêtre flottante qui affiche les suggestions d'EasyTab sous le curseur"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 

@@ -330,7 +330,10 @@ Avant chaque push, comme la CI (Linux, macOS et Windows) :
 cargo fmt --all
 cargo clippy --all-targets -- -D warnings
 cargo test
+cargo deny check advisories licenses sources   # cargo install cargo-deny
 ```
+
+Rust 1.88 au minimum (`rust-version` dans `Cargo.toml`, vérifié par la CI).
 
 ## Organisation du code
 

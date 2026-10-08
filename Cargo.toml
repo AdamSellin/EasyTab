@@ -5,6 +5,8 @@ members = ["crates/easytab-core", "crates/easytab-term", "crates/easytab-cli", "
 [workspace.package]
 version = "0.1.11"
 edition = "2021"
+# Oldest supported Rust, checked by the `msrv` CI job.
+rust-version = "1.88"
 license = "MIT"
 repository = "https://github.com/AdamSellin/EasyTab"
 
