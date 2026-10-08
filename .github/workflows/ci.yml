@@ -46,7 +46,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.88
+      # The version goes in `toolchain`, not after `@`: Dependabot reads
+      # `@1.88` as an action version and bumps it to a Rust that does not
+      # exist (`@1.120`). Keep it equal to `rust-version` in Cargo.toml.
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.88"
       - uses: Swatinem/rust-cache@v2
       - name: System packages (Linux)
         run: |
