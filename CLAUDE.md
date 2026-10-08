@@ -58,7 +58,8 @@ cargo test
 - `shell-integration/easytab.ps1` et les chaînes de `scripts/install.ps1` restent en ASCII :
   Windows PowerShell 5.1 lit l'UTF-8 sans BOM comme de l'ANSI, et `irm | iex` refuse un BOM.
   `easytab.ps1` est copié tel quel dans `~/.easytab/bin/easytab-profile.ps1` (nommé
-  `easytab.ps1`, PowerShell le lancerait à la place de `easytab.exe`) et signé à la release : n'y écrire
+  `easytab.ps1`, PowerShell le lancerait à la place de `easytab.exe`) et signable à la release
+  (SignPath, pas encore actif : la demande Foundation a été refusée en octobre 2026) : n'y écrire
   aucun chemin (il trouve `easytab-term` par `$PSScriptRoot`). Pas d'`Invoke-Expression` dans
   le profil : les antivirus d'entreprise le bloquent.
 
