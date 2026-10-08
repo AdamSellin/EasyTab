@@ -381,7 +381,7 @@ impl Popup {
                     shown: hint.shown,
                     accept: hint.accept,
                 });
-                if self.inline.is_none() {
+                if self.inline.is_none() && !fill.awaits_echo(&input) {
                     self.fill = None;
                 }
             }
@@ -1321,6 +1321,9 @@ mod tests {
         let mut popup = Popup::default();
         popup.update(&session_with(b"docker ex"), &completer, Path::new("/"));
         assert_eq!(popup.accept().as_deref(), Some(&b"ec -it "[..]));
+        // The shell echoes the insertion in pieces: the fill waits for it.
+        popup.update(&session_with(b"docker exec"), &completer, Path::new("/"));
+        assert!(popup.fill.is_some());
         // Champ vide : le reste en gris, → n'insère rien.
         popup.update(
             &session_with(b"docker exec -it "),

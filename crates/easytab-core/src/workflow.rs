@@ -213,6 +213,13 @@ impl Fill {
         })
     }
 
+    /// `input` is a start of the line the fill begins with: the shell has not
+    /// finished echoing the insertion yet (bash may echo `easytab-wf` and the
+    /// space after it separately). The fill must wait, not end.
+    pub fn awaits_echo(&self, input: &str) -> bool {
+        input.len() < self.prefix.len() && self.prefix.starts_with(input)
+    }
+
     /// → a inséré `accepted` à la fin de la ligne `input` : passe au champ
     /// suivant. `false` s'il n'y en a plus.
     pub fn advance(&mut self, input: &str, accepted: &str) -> bool {
@@ -307,6 +314,12 @@ mod tests {
         assert!(fill.hint("ssh ").is_some());
         assert_eq!(fill.hint("ssh web"), None);
         assert_eq!(Fill::start("ls -la", "ls -la"), None);
+        // The insertion is still being echoed: wait. A changed line ends it.
+        let fill = Fill::start("echo wf ", "echo wf {mot} fin").unwrap();
+        assert!(fill.awaits_echo("echo wf"));
+        assert!(fill.awaits_echo("echo w"));
+        assert!(!fill.awaits_echo("echo wf "));
+        assert!(!fill.awaits_echo("echo x"));
     }
 
     #[test]
