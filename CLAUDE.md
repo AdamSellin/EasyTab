@@ -1,7 +1,7 @@
 # EasyTab : notes pour Claude
 
 Autocomplétion graphique pour le terminal, façon Fig : un wrapper PTY lit la ligne en cours et
-affiche des suggestions tirées des specs de Fig. Vue d'ensemble des dossiers : `docs/guide.md`.
+affiche des suggestions tirées des specs de Fig. Vue d'ensemble des dossiers : `docs/guide/fr/development.md`.
 
 ## Commandes
 
@@ -37,8 +37,10 @@ cargo deny check advisories licenses sources   # deny.toml ; aussi chaque lundi 
 
 - Réglages de l'utilisateur : `crates/easytab-core/src/config.rs` (`~/.easytab/config.toml`),
   partagé avec `easytab-cli` par `#[path]` pour ne pas y embarquer QuickJS. Tout nouveau réglage
-  va aussi dans `TEMPLATE` (anglais) et `TEMPLATE_FR`, et dans `docs/guide.md` (le README reste
-  court). `README.md` est en anglais, `README.fr.md` en français : changer les deux ensemble.
+  va aussi dans `TEMPLATE` (anglais) et `TEMPLATE_FR`, et dans `docs/guide/en/settings.md` et
+  `docs/guide/fr/settings.md` (le README reste court). `README.md` est en anglais, `README.fr.md`
+  en français : changer les deux ensemble. De même pour le guide : `docs/guide/en/` et
+  `docs/guide/fr/` ont les mêmes fichiers, sous les mêmes noms.
 - Ordre des specs d'une commande (`Completer::complete_words`) : `~/.easytab/specs` (`spec::custom`),
   puis, sous Windows, `specs/windows.json` (`spec::windows`, écrit à la main), puis Fig, puis
   PowerShell (`pwsh.rs`), puis fish et bash-completion (`shell.rs`), puis `--help` (`help.rs`).

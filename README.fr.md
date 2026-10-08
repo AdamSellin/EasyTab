@@ -62,7 +62,7 @@ irm https://github.com/AdamSellin/EasyTab/releases/latest/download/install.ps1 |
 </p>
 
 Ouvre ensuite un nouveau terminal. Pour mettre à jour : `easytab update`.
-Sur un PC d'entreprise qui bloque le script : [installer sans script](docs/guide.md#pc-dentreprise).
+Sur un PC d'entreprise qui bloque le script : [installer sans script](docs/guide/fr/install.md#pc-dentreprise).
 
 ## Utiliser
 
@@ -86,7 +86,7 @@ Sur un PC d'entreprise qui bloque le script : [installer sans script](docs/guide
 
 Les messages sont en français si le système l'est, sinon en anglais (`EASYTAB_LANG=fr` pour forcer).
 
-Tout le reste (réglages, specs personnelles, compilation) est dans le [guide](docs/guide.md).
+Tout le reste (réglages, specs personnelles, compilation) est dans le [guide](docs/guide/fr/README.md).
 
 ## Signature du code et confidentialité
 
