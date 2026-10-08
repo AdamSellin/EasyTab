@@ -21,7 +21,7 @@ portable-pty = "0.9"
 rquickjs = "0.14"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["raw_value"] }
-miniz_oxide = "0.8"
+miniz_oxide = "0.9"
 toml = { version = "0.9", default-features = false, features = ["parse", "serde"] }
 unicode-width = "0.2"
 vt100 = "0.16"
