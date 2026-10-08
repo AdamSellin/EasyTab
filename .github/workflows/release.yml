@@ -35,7 +35,7 @@ jobs:
             target: x86_64-pc-windows-msvc
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
@@ -75,7 +75,7 @@ jobs:
       - name: Upload for SignPath
         id: unsigned
         if: runner.os == 'Windows' && vars.SIGNPATH_ORGANIZATION_ID != ''
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: windows-unsigned
           path: windows/
@@ -114,7 +114,7 @@ jobs:
           Copy-Item windows/easytab.exe, windows/easytab-term.exe, windows/easytab-overlay.exe, windows/easytab-profile.ps1, README.md, LICENSE $name
           Compress-Archive -Path $name -DestinationPath "$name.zip"
           Copy-Item windows/install.ps1 install.ps1
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: easytab-${{ matrix.target }}
           path: |
@@ -125,9 +125,9 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # Archives seulement, pas l'artefact envoyé à SignPath.
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           path: dist
           pattern: easytab-*
