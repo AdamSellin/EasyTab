@@ -9,6 +9,11 @@ use std::time::{Duration, Instant};
 
 use serde::Serialize;
 
+/// Most bytes kept from each stream. A generator only needs a list of names;
+/// beyond this, the rest is read and dropped so the command never blocks on
+/// a full pipe.
+const MAX_OUTPUT: usize = 4 * 1024 * 1024;
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 pub struct Output {
     pub stdout: String,
@@ -68,29 +73,60 @@ pub fn run(program: &str, args: &[String], cwd: &Path, timeout: Duration) -> Out
     // Un processus lancé en arrière-plan par la commande peut garder la sortie
     // ouverte : on n'attend pas sa fin au-delà d'un court délai.
     let deadline = Instant::now() + Duration::from_millis(200);
-    let collect = |pipe: mpsc::Receiver<Vec<u8>>| {
-        clean(
-            pipe.recv_timeout(deadline.saturating_duration_since(Instant::now()))
-                .unwrap_or_default(),
-        )
+    let collect = |pipe: mpsc::Receiver<(Vec<u8>, bool)>| {
+        let (data, truncated) = pipe
+            .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+            .unwrap_or_default();
+        (clean(data), truncated)
     };
+    let (stdout, stdout_truncated) = collect(stdout);
+    let (mut stderr, stderr_truncated) = collect(stderr);
+    for (name, truncated) in [("stdout", stdout_truncated), ("stderr", stderr_truncated)] {
+        if truncated {
+            if !stderr.is_empty() {
+                stderr.push('\n');
+            }
+            stderr.push_str(&format!(
+                "easytab: {program}: {name} truncated after {} MiB",
+                MAX_OUTPUT / (1024 * 1024)
+            ));
+        }
+    }
     Output {
-        stdout: collect(stdout),
-        stderr: collect(stderr),
+        stdout,
+        stderr,
         status,
     }
 }
 
-fn read_in_background(pipe: Option<impl Read + Send + 'static>) -> mpsc::Receiver<Vec<u8>> {
+fn read_in_background(pipe: Option<impl Read + Send + 'static>) -> mpsc::Receiver<(Vec<u8>, bool)> {
     let (sender, receiver) = mpsc::channel();
     thread::spawn(move || {
-        let mut data = Vec::new();
-        if let Some(mut pipe) = pipe {
-            let _ = pipe.read_to_end(&mut data);
-        }
-        let _ = sender.send(data);
+        let read = pipe.map(|pipe| read_capped(pipe, MAX_OUTPUT));
+        let _ = sender.send(read.unwrap_or_default());
     });
     receiver
+}
+
+/// Reads `reader` to the end but keeps at most `limit` bytes, cut after the
+/// last full line. The flag tells whether something was dropped.
+fn read_capped(mut reader: impl Read, limit: usize) -> (Vec<u8>, bool) {
+    let mut data = Vec::new();
+    let _ = reader.by_ref().take(limit as u64).read_to_end(&mut data);
+    let mut buf = [0u8; 16 * 1024];
+    let mut truncated = false;
+    while let Ok(n) = reader.read(&mut buf) {
+        if n == 0 {
+            break;
+        }
+        truncated = true;
+    }
+    if truncated {
+        // A cut name would show up as a wrong suggestion.
+        let end = data.iter().rposition(|&b| b == b'\n').map_or(0, |i| i + 1);
+        data.truncate(end);
+    }
+    (data, truncated)
 }
 
 fn clean(data: Vec<u8>) -> String {
@@ -180,10 +216,48 @@ fn executable_extensions() -> Vec<String> {
     vec![String::new()]
 }
 
-#[cfg(all(test, unix))]
+#[cfg(test)]
 mod tests {
     use super::*;
 
+    #[test]
+    fn caps_long_output_at_a_line_end() {
+        let input = b"main\nfeature\nfix-overflow\n".repeat(1000);
+        let (data, truncated) = read_capped(&input[..], 30);
+        assert!(truncated);
+        assert_eq!(data, b"main\nfeature\nfix-overflow\n");
+
+        let (data, truncated) = read_capped(&b"main\nfeature\n"[..], 30);
+        assert!(!truncated);
+        assert_eq!(data, b"main\nfeature\n");
+
+        // Exactly at the limit: nothing dropped.
+        let (data, truncated) = read_capped(&b"abc\n"[..], 4);
+        assert!(!truncated);
+        assert_eq!(data, b"abc\n");
+
+        // Huge stream, no line end: bounded memory, nothing kept.
+        let (data, truncated) = read_capped(std::io::repeat(b'x').take(10 * 1024 * 1024), 1024);
+        assert!(truncated);
+        assert!(data.is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn reports_truncated_output() {
+        let output = run(
+            "sh",
+            &["-c".into(), "yes main | head -c 6000000".into()],
+            Path::new("/"),
+            Duration::from_secs(10),
+        );
+        assert_eq!(output.status, 0);
+        assert!(output.stdout.len() <= MAX_OUTPUT);
+        assert!(output.stdout.ends_with("main"));
+        assert!(output.stderr.contains("stdout truncated"));
+    }
+
+    #[cfg(unix)]
     #[test]
     fn captures_output_and_status() {
         let output = run(
@@ -200,6 +274,7 @@ mod tests {
         assert_eq!(output.status, 3);
     }
 
+    #[cfg(unix)]
     #[test]
     fn stops_slow_commands() {
         let start = Instant::now();
@@ -213,6 +288,7 @@ mod tests {
         assert!(start.elapsed() < Duration::from_secs(2));
     }
 
+    #[cfg(unix)]
     #[test]
     fn reports_missing_programs() {
         let output = run(
