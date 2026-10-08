@@ -437,6 +437,9 @@ impl Popup {
             // Ailleurs, Ctrl+Espace reste au shell (complétion de PowerShell).
             Key::Open => !self.is_shown() && self.is_dismissed(),
             Key::Enter => self.is_shown() && self.enter_inserts(),
+            // The list on screen may be older than the line: with nothing
+            // left to insert, Tab goes to the shell.
+            Key::Accept => self.is_shown() && self.completion.is_some(),
             Key::Right => {
                 self.inline_drawn.is_some()
                     && self.inline.as_ref().is_some_and(|i| i.accept.is_some())
@@ -1159,6 +1162,29 @@ mod tests {
         popup.select(1);
         assert!(!popup.handles(Key::Enter));
         assert!(popup.handles(Key::Accept));
+    }
+
+    /// A letter typed just before Tab: the list drawn for `git ch` is brought
+    /// up to date before Tab inserts, so only the missing part is sent. With
+    /// nothing left to insert, Tab goes to the shell.
+    #[test]
+    fn tab_uses_the_list_of_the_current_line() {
+        let completer = Completer::builtin();
+        let mut out = Vec::new();
+        let session = session_with(b"git ch");
+        let mut popup = Popup::default();
+        popup.update(&session, &completer, Path::new("/"));
+        popup.draw(session.screen(), &mut out);
+        popup.update(&session_with(b"git chec"), &completer, Path::new("/"));
+        assert!(popup.handles(Key::Accept));
+        assert_eq!(popup.accept().as_deref(), Some(&b"kout "[..]));
+
+        let session = session_with(b"git checkou");
+        popup.update(&session, &completer, Path::new("/"));
+        popup.draw(session.screen(), &mut out);
+        popup.update(&session_with(b"git checkout"), &completer, Path::new("/"));
+        assert!(popup.is_shown());
+        assert!(!popup.handles(Key::Accept));
     }
 
     #[test]
