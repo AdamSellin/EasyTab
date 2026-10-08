@@ -491,6 +491,7 @@ impl Completer {
     /// celles de `ping` et `where` y décrivent les versions Unix.
     fn builtin_for(windows: bool) -> Self {
         let mut specs = if windows { spec::windows() } else { Vec::new() };
+        specs.extend(spec::easytab());
         specs.extend(spec::builtin());
         let mut completer = Self::from_specs(specs);
         completer.installed = Some(OnceLock::new());
@@ -1707,6 +1708,35 @@ mod tests {
                 "{:?}",
                 spec.names
             );
+        }
+    }
+
+    /// EasyTab completes its own command, on every system.
+    #[test]
+    fn completes_the_easytab_command() {
+        for windows in [false, true] {
+            let mut completer = Completer::builtin_for(windows);
+            completer.installed = Some(OnceLock::from(HashSet::from(["easytab".to_string()])));
+            let subcommands = labels_of(&completer, "easytab ");
+            for name in [
+                "config",
+                "workflows",
+                "doctor",
+                "update",
+                "install",
+                "uninstall",
+            ] {
+                assert!(
+                    subcommands.contains(&name.to_string()),
+                    "{name}: {subcommands:?}"
+                );
+            }
+            assert!(labels_of(&completer, "easytab doc").contains(&"doctor".to_string()));
+            assert_eq!(
+                labels_of(&completer, "easytab install --shell "),
+                ["bash", "pwsh", "zsh"]
+            );
+            assert!(labels_of(&completer, "easytab update -").contains(&"--force".to_string()));
         }
     }
 

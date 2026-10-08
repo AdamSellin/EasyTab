@@ -215,6 +215,16 @@ pub fn windows() -> Vec<Spec> {
     bundle.specs.into_iter().map(Spec::from).collect()
 }
 
+/// Spec of EasyTab's own `easytab` command, written by hand in
+/// `specs/easytab.json`. A test of `easytab-cli` checks it against the
+/// command's clap definition.
+pub fn easytab() -> Vec<Spec> {
+    let bundle: Bundle<Vec<Command>> =
+        serde_json::from_str(include_str!("../../../specs/easytab.json"))
+            .expect("specs/easytab.json invalide");
+    bundle.specs.into_iter().map(Spec::from).collect()
+}
+
 /// Specs embarquées que d'autres chargent par `loadSpec`, par chemin
 /// (`specs/loadable.json.z`). Décompressées seulement au premier `loadSpec`.
 pub fn loadable() -> HashMap<String, Spec> {

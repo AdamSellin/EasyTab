@@ -42,7 +42,9 @@ cargo deny check advisories licenses sources   # deny.toml ; aussi chaque lundi 
   en français : changer les deux ensemble. De même pour le guide : `docs/guide/en/` et
   `docs/guide/fr/` ont les mêmes fichiers, sous les mêmes noms.
 - Ordre des specs d'une commande (`Completer::complete_words`) : `~/.easytab/specs` (`spec::custom`),
-  puis, sous Windows, `specs/windows.json` (`spec::windows`, écrit à la main), puis Fig, puis
+  puis, sous Windows, `specs/windows.json` (`spec::windows`, écrit à la main), puis
+  `specs/easytab.json` (la commande `easytab`, écrite à la main : un test de `easytab-cli` la
+  compare à clap, à compléter avec toute nouvelle sous-commande ou option), puis Fig, puis
   PowerShell (`pwsh.rs`), puis fish et bash-completion (`shell.rs`), puis `--help` (`help.rs`).
   Dans PowerShell, un alias (`ls`) passe avant les specs embarquées : il reçoit les paramètres de
   sa cmdlet. Valeurs lues dans les fichiers du projet ou de l'utilisateur (Makefile,

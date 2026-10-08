@@ -25,6 +25,10 @@ outils de Windows absents des specs Fig (winget, robocopy, taskkill, netsh…), 
 avant celles de Fig de même nom (`ping`, `where`). Une option nommée `/LOG:` ou `/scanfile=`
 prend sa valeur collée.
 
+`easytab.json`, also written by hand in the same format, describes EasyTab's own `easytab`
+command, on every system. A test of `easytab-cli` (`easytab_spec_matches_the_command`) checks it
+against the command's clap definition: a new subcommand or option goes in both.
+
 Seules les commandes installées (présentes dans le PATH) sont proposées comme commandes.
 
 ## Régénérer

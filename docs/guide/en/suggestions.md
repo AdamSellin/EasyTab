@@ -13,6 +13,9 @@ They come before Fig's (whose `ping` and `where` describe the Unix versions). Op
 with `/` are completed ignoring case (`/mir` is `/MIR`), with their value attached
 (`/LOG:log.txt`, `/FeatureName:…`).
 
+**EasyTab itself.** `easytab` completes its own subcommands and options (`easytab install
+--shell pwsh`…), described in `specs/easytab.json`.
+
 **History.** Commands typed before that extend the current line come first
 (`docker-compose u` → `docker-compose up -d --build`, clock icon), taken from the shell's history
 (`~/.bash_history`, `~/.zsh_history`, PowerShell's PSReadLine history). EasyTab also keeps, in
